@@ -1,0 +1,4 @@
+provider: github
+owner: maurerk1993
+repo: dragonwilds_control
+updaterCacheDirName: dragonwilds-control-updater

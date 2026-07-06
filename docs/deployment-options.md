@@ -1,44 +1,47 @@
 # Deployment Options
 
-This project starts as a local Windows control dashboard because the app needs direct access to SteamCMD, `RSDragonwilds.exe`, save files, logs, and backups on the server machine.
+This project now supports an installable Windows desktop app because the control panel needs direct access to SteamCMD, `RSDragonwilds.exe`, save files, logs, and backups on the server machine.
 
-## Option A: Desktop Launcher
+## Option A: Setup Installer
 
-Best first step.
+Recommended.
 
-1. Copy this folder to the Windows 11 server, for example `C:\Apps\DragonwildsServerControl`.
-2. Install Node.js 20 or newer on the Windows server.
-3. Double-click `Start-DragonwildsControl.bat`.
-4. The dashboard opens at `http://127.0.0.1:8787`.
-5. Run `scripts\create-desktop-shortcut.ps1` from PowerShell to create a desktop shortcut.
-
-Pros:
-- Fastest to deploy.
-- Easy to debug.
-- Matches the current batch-file workflow.
-
-Tradeoffs:
-- A console window stays open while the dashboard is running.
-- Node.js must be installed unless this is packaged later.
-
-## Option B: Electron Desktop App
-
-Best polished desktop experience.
-
-The same UI and backend can be wrapped with Electron so the server gets a normal Windows installer, bundled runtime, app icon, and desktop shortcut.
+1. On your build machine, run `npm install`.
+2. Run `npm run dist:exe`.
+3. Copy the generated setup file from `dist\` to the Windows 11 server.
+4. Double-click the setup file on the server.
+5. Open `Dragonwilds Server Control` from the desktop shortcut or Start Menu.
+6. Accept the Windows UAC prompt when the app opens.
 
 Pros:
-- Feels like a native desktop app.
-- No separate Node.js install for the final packaged app.
-- Easy desktop launch.
+- Easiest server install.
+- Bundles the app runtime.
+- Creates desktop and Start Menu shortcuts.
+- Relaunches with Administrator rights so the default server folders can be managed.
 
 Tradeoffs:
-- Adds packaging dependencies and a larger install size.
-- Needs a follow-up packaging pass.
+- The installer is unsigned until you add a code-signing certificate, so Windows may show a publisher warning.
+
+## Option B: MSI Package
+
+Use this if you prefer MSI deployment.
+
+1. Run `npm install`.
+2. Run `npm run dist:msi`.
+3. Copy the generated `.msi` from `dist\` to the Windows 11 server.
+4. Install it on the server.
+
+Pros:
+- Familiar enterprise-style install format.
+- Useful for some software deployment tools.
+
+Tradeoffs:
+- MSI generation can require additional Windows packaging tools depending on the local builder environment.
+- The standard setup `.exe` is the smoother path for a personal Windows server.
 
 ## Option C: Windows Service Plus Web UI
 
-Best if you want to administer the server from another computer.
+Optional later enhancement if you want to administer the server from another computer.
 
 The control backend runs as a Windows service and listens on the LAN. You would open the dashboard from another PC using the Windows server's IP address and port.
 
@@ -54,4 +57,4 @@ Tradeoffs:
 
 ## Recommended Path
 
-Start with Option A for the first live server install. Once the workflow is proven on the Windows 11 server, package Option B for a cleaner desktop app. Move to Option C only if you want remote browser access from other machines.
+Use Option A unless you specifically need MSI. Move to Option C only if you want remote browser access from other machines.

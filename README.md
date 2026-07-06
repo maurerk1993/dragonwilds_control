@@ -1,6 +1,6 @@
 # Dragonwilds Server Control
 
-Windows 11 local dashboard for deploying, controlling, configuring, and backing up a RuneScape: Dragonwilds dedicated server.
+Windows 11 desktop app for deploying, controlling, configuring, and backing up a RuneScape: Dragonwilds dedicated server.
 
 This app is based on the existing batch-file workflow:
 
@@ -13,7 +13,26 @@ This app is based on the existing batch-file workflow:
 - Log path: `RSDragonwilds\Saved\Logs\RSDragonwilds.log`
 - Default server port: `7777`
 
-## Run Locally
+## Build The Windows Installer
+
+```powershell
+npm install
+npm run dist:exe
+```
+
+The generated setup `.exe` will be in `dist\`. Copy it to the Windows 11 server, install it, then open `Dragonwilds Server Control` from the desktop or Start Menu.
+
+The packaged app asks Windows for Administrator elevation when it opens. This is intentional so it can create and manage the default `C:\SteamCMD` and `C:\GameServers` paths.
+
+For MSI packaging:
+
+```powershell
+npm run dist:msi
+```
+
+The setup `.exe` is recommended for a personal Windows 11 server because it is the least fussy path.
+
+## Run Locally For Development
 
 ```powershell
 npm start
@@ -21,7 +40,15 @@ npm start
 
 The dashboard opens at `http://127.0.0.1:8787`.
 
+To run the desktop shell during development:
+
+```powershell
+npm run desktop
+```
+
 ## Windows Server Desktop Launch
+
+The installer path above is recommended. The batch launcher remains available for development or emergency fallback:
 
 1. Copy this repo folder to the Windows 11 server.
 2. Install Node.js 20 or newer on that server.
@@ -47,6 +74,10 @@ Stop the dedicated server before restoring a backup.
 ## Deployment Options
 
 See [docs/deployment-options.md](docs/deployment-options.md).
+
+## App Updates
+
+See [docs/app-update-options.md](docs/app-update-options.md). The packaged app checks GitHub Releases for updates on launch. Push a `v*` version tag to trigger the release workflow.
 
 ## Validation
 

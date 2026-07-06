@@ -5,6 +5,11 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const {
+  getUpdateState,
+  checkForAppUpdates,
+  installDownloadedAppUpdate
+} = require("./update-controller");
 
 const appRoot = path.resolve(__dirname, "..");
 const publicRoot = path.join(appRoot, "public");
@@ -19,6 +24,7 @@ const activityLogPath = path.join(dataDir, "activity.log");
 
 let activeTask = null;
 let serverProcess = null;
+let controlServer = null;
 
 const defaultProfile = {
   appId: "4019830",
@@ -347,24 +353,42 @@ function psString(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function psArray(values) {
+  return `@(${values.map(psString).join(",")})`;
+}
+
+function steamcmdString(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
 async function runInstall(profile, validate) {
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
   const steamcmdZip = path.join(os.tmpdir(), "steamcmd.zip");
-  const appUpdate = validate
-    ? `& ${psString(steamcmdExe)} +force_install_dir ${psString(profile.paths.serverDir)} +login anonymous +app_update ${profile.appId} validate +quit`
-    : `& ${psString(steamcmdExe)} +force_install_dir ${psString(profile.paths.serverDir)} +login anonymous +app_update ${profile.appId} +quit`;
+  const scriptName = validate ? "steamcmd-install-validate.txt" : "steamcmd-update.txt";
+  const steamcmdScript = [
+    "@ShutdownOnFailedCommand 1",
+    "@NoPromptForPassword 1",
+    `force_install_dir ${steamcmdString(profile.paths.serverDir)}`,
+    "login anonymous",
+    `app_update ${profile.appId}${validate ? " validate" : ""}`,
+    "quit"
+  ];
 
   const script = [
     "$ErrorActionPreference='Stop'",
+    `New-Item -ItemType Directory -Force -Path ${psString(dataDir)} | Out-Null`,
     `New-Item -ItemType Directory -Force -Path ${psString(profile.paths.steamcmdDir)} | Out-Null`,
     `New-Item -ItemType Directory -Force -Path ${psString(profile.paths.serverDir)} | Out-Null`,
     `if (!(Test-Path -LiteralPath ${psString(steamcmdExe)})) {`,
     `  Invoke-WebRequest -Uri ${psString(profile.steamcmdUrl)} -OutFile ${psString(steamcmdZip)}`,
     `  Expand-Archive -LiteralPath ${psString(steamcmdZip)} -DestinationPath ${psString(profile.paths.steamcmdDir)} -Force`,
     "}",
-    `& ${psString(steamcmdExe)} +quit`,
-    appUpdate,
-    "exit $LASTEXITCODE"
+    `$steamcmdScriptPath = Join-Path ${psString(dataDir)} ${psString(scriptName)}`,
+    `Set-Content -LiteralPath $steamcmdScriptPath -Encoding ASCII -Value ${psArray(steamcmdScript)}`,
+    `& ${psString(steamcmdExe)} +runscript $steamcmdScriptPath`,
+    "$steamcmdExitCode = $LASTEXITCODE",
+    "Remove-Item -LiteralPath $steamcmdScriptPath -Force -ErrorAction SilentlyContinue",
+    "exit $steamcmdExitCode"
   ].join("; ");
 
   return powershellTask(validate ? "Install or repair server with validate" : "Update server", script);
@@ -559,13 +583,29 @@ async function handleApi(request, response, url) {
         version: appPackage.version,
         profile,
         releaseNotes,
-        status
+        status,
+        update: getUpdateState()
       });
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/status") {
       sendJson(response, 200, await getStatus());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/updates") {
+      sendJson(response, 200, { update: getUpdateState() });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/updates/check") {
+      sendJson(response, 202, { update: await checkForAppUpdates() });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/updates/install") {
+      sendJson(response, 202, { update: await installDownloadedAppUpdate() });
       return;
     }
 
@@ -682,11 +722,20 @@ function openBrowser(targetUrl) {
   spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }
 
-async function main() {
+async function startControlServer() {
+  if (controlServer) {
+    const address = controlServer.address();
+    const activePort = typeof address === "object" && address ? address.port : port;
+    return {
+      server: controlServer,
+      url: `http://${host}:${activePort}`
+    };
+  }
+
   await ensureDataDir();
   await writeJson(profilePath, await getProfile());
 
-  const server = http.createServer(async (request, response) => {
+  controlServer = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
     if (url.pathname.startsWith("/api/")) {
       await handleApi(request, response, url);
@@ -695,16 +744,47 @@ async function main() {
     await serveStatic(request, response, url);
   });
 
-  server.listen(port, host, () => {
-    const targetUrl = `http://${host}:${port}`;
-    console.log(`Dragonwilds Server Control ${appPackage.version}`);
-    console.log(`Listening on ${targetUrl}`);
-    console.log(`Data directory: ${dataDir}`);
-    openBrowser(targetUrl);
+  return new Promise((resolve, reject) => {
+    controlServer.once("error", reject);
+    controlServer.listen(port, host, () => {
+      controlServer.off("error", reject);
+      const address = controlServer.address();
+      const activePort = typeof address === "object" && address ? address.port : port;
+      const targetUrl = `http://${host}:${activePort}`;
+      console.log(`Dragonwilds Server Control ${appPackage.version}`);
+      console.log(`Listening on ${targetUrl}`);
+      console.log(`Data directory: ${dataDir}`);
+      openBrowser(targetUrl);
+      resolve({ server: controlServer, url: targetUrl });
+    });
   });
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+function stopControlServer() {
+  return new Promise((resolve, reject) => {
+    if (!controlServer) {
+      resolve();
+      return;
+    }
+    controlServer.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      controlServer = null;
+      resolve();
+    });
+  });
+}
+
+module.exports = {
+  startControlServer,
+  stopControlServer
+};
+
+if (require.main === module) {
+  startControlServer().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

@@ -488,7 +488,8 @@ button {
 .path-list,
 .details-grid,
 .backup-table,
-.deploy-options {
+.deploy-options,
+.update-panel {
   padding: 16px;
 }
 
@@ -510,6 +511,7 @@ button {
 .details-grid,
 .backup-table,
 .deploy-options,
+.update-panel,
 .settings-detail-grid {
   background: var(--panel-2);
   color: var(--ink);
@@ -675,6 +677,35 @@ button {
   line-height: 1.5;
 }
 
+.update-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(109, 87, 52, 0.25);
+}
+
+.update-summary .label {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.update-summary strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 20px;
+}
+
+.update-summary p {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+
 .toast {
   position: fixed;
   right: 18px;
@@ -807,7 +838,8 @@ button {
 
   .panel-heading,
   .notice,
-  .action-row {
+  .action-row,
+  .update-summary {
     align-items: stretch;
     flex-direction: column;
   }

@@ -78,8 +78,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.1.0") {
-    throw new Error(`Expected version 0.1.0, got ${app.version}`);
+  if (app.version !== "0.3.0") {
+    throw new Error(`Expected version 0.3.0, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");

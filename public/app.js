@@ -1,6 +1,7 @@
 const state = {
   profile: null,
   status: null,
+  update: null,
   releaseNotes: null,
   activeView: "dashboard",
   refreshTimer: null
@@ -62,13 +63,17 @@ async function loadApp() {
   const payload = await api("/api/app");
   state.profile = payload.profile;
   state.status = payload.status;
+  state.update = payload.update;
   state.releaseNotes = payload.releaseNotes;
   renderAll();
 }
 
 async function refreshStatus() {
   state.status = await api("/api/status");
+  const updatePayload = await api("/api/updates");
+  state.update = updatePayload.update;
   renderStatus();
+  renderUpdateState();
   renderBackups();
   renderLogs();
 }
@@ -77,6 +82,7 @@ function renderAll() {
   renderProfileForm();
   renderMappings();
   renderStatus();
+  renderUpdateState();
   renderBackups();
   renderLogs();
   renderReleaseNotes();
@@ -302,6 +308,51 @@ function renderReleaseNotes() {
   $("#actionHint").title = text;
 }
 
+function renderUpdateState() {
+  const update = state.update || {
+    status: "unavailable",
+    message: "Updates are available from the packaged desktop app."
+  };
+  const label = {
+    disabled: "Disabled",
+    unavailable: "Unavailable",
+    idle: "Ready",
+    checking: "Checking",
+    current: "Up to date",
+    downloading: "Downloading",
+    downloaded: "Ready to install",
+    error: "Error"
+  }[update.status] || update.status || "Unknown";
+
+  setText("updateStatus", label);
+  setText("updateMessage", update.lastError ? `${update.message} ${update.lastError}` : update.message);
+  const installButton = $("#installAppUpdate");
+  if (installButton) {
+    installButton.disabled = update.status !== "downloaded";
+  }
+
+  const details = [
+    ["Current version", update.currentVersion || state.status?.appVersion || "Unknown"],
+    ["Available version", update.availableVersion || "None"],
+    ["Downloaded version", update.downloadedVersion || "None"],
+    ["Last checked", update.lastCheckedAt ? new Date(update.lastCheckedAt).toLocaleString() : "Not yet"],
+    ["Download progress", Number.isFinite(update.percent) ? `${Math.round(update.percent)}%` : "Not active"]
+  ];
+
+  const container = $("#updateDetails");
+  if (!container) return;
+  container.innerHTML = details
+    .map(
+      ([name, value]) => `
+        <div class="detail-item">
+          <span class="detail-name">${escapeHtml(name)}</span>
+          <span class="detail-value">${escapeHtml(String(value))}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
 function readProfileFromForm() {
   const form = $("#settingsForm");
   const next = structuredClone(state.profile);
@@ -426,6 +477,25 @@ function wireEvents() {
   $("#runFullCheck").addEventListener("click", refreshStatus);
   $("#refreshNow").addEventListener("click", refreshStatus);
   $("#refreshLogs").addEventListener("click", refreshStatus);
+  $("#checkAppUpdate").addEventListener("click", async () => {
+    try {
+      const payload = await api("/api/updates/check", { method: "POST", body: "{}" });
+      state.update = payload.update;
+      renderUpdateState();
+      toast("App update check started.");
+    } catch (error) {
+      toast(error.message);
+      await refreshStatus();
+    }
+  });
+  $("#installAppUpdate").addEventListener("click", async () => {
+    try {
+      await api("/api/updates/install", { method: "POST", body: "{}" });
+    } catch (error) {
+      toast(error.message);
+      await refreshStatus();
+    }
+  });
   $("#logSearch").addEventListener("input", renderLogs);
   $("#addCustomIni").addEventListener("click", () => {
     state.profile.customIniValues = state.profile.customIniValues || [];

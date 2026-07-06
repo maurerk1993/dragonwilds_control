@@ -55,7 +55,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.1.0</strong>
+            <strong id="appVersion">0.3.0</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -300,17 +300,35 @@
             </div>
             <div class="deploy-options">
               <article>
-                <h3>Option A: Desktop Launcher</h3>
-                <p>Recommended for the first server install. Copy the app folder to the Windows server, install Node.js 20 or newer, then double-click the launcher.</p>
+                <h3>Option A: Setup Installer</h3>
+                <p>Recommended. Build the Windows setup file, copy it to the server, install it, then open Dragonwilds Server Control from the desktop or Start Menu.</p>
               </article>
               <article>
-                <h3>Option B: Electron Desktop App</h3>
-                <p>Best final polish. The same UI can be wrapped into an installer with a desktop icon and bundled Node runtime.</p>
+                <h3>Option B: MSI Package</h3>
+                <p>Use this if your server setup prefers MSI deployment. The MSI build command creates a Windows installer package from the same desktop app.</p>
               </article>
               <article>
-                <h3>Option C: Windows Service + Web UI</h3>
-                <p>Best if you want to control the server from another PC. The service runs in the background and exposes the dashboard on your LAN or behind VPN.</p>
+                <h3>Option C: Service Later</h3>
+                <p>Use a Windows service only if you later want remote access from another PC. The installed desktop app is simpler and safer for local server control.</p>
               </article>
+            </div>
+          </section>
+
+          <section class="panel full-panel">
+            <div class="panel-heading">
+              <h2>App Updates</h2>
+              <button class="primary-button" id="checkAppUpdate">Check Now</button>
+            </div>
+            <div class="update-panel">
+              <div class="update-summary">
+                <div>
+                  <span class="label">Status</span>
+                  <strong id="updateStatus">Unavailable</strong>
+                  <p id="updateMessage">Updates are available from the packaged desktop app.</p>
+                </div>
+                <button class="action-button warm" id="installAppUpdate" disabled>Restart And Install</button>
+              </div>
+              <div class="details-grid" id="updateDetails"></div>
             </div>
           </section>
         </div>
