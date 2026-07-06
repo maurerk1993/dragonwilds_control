@@ -1,0 +1,23 @@
+{
+  "version": "0.1.0",
+  "title": "Initial desktop-control preview",
+  "date": "2026-07-06",
+  "notes": [
+    {
+      "heading": "Run the server from one dashboard",
+      "body": "Install, update, start, stop, restart, and monitor the dedicated server without manually editing batch files each time."
+    },
+    {
+      "heading": "Configure common hosting settings",
+      "body": "Set the server name, password, max players, launch arguments, save paths, and server port from the UI. The INI key mapping is editable so it can match the official config file on your server."
+    },
+    {
+      "heading": "Backups are built in",
+      "body": "Create timestamped savegame backups, review recent backups, and restore a backup while preserving a safety copy of the current save folder."
+    },
+    {
+      "heading": "Designed for Windows 11 deployment",
+      "body": "The first version runs as a local dashboard on the Windows server and includes desktop-launch setup notes. No database or SQL setup is required."
+    }
+  ]
+}

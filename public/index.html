@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dragonwilds Server Control</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" role="img">
+              <path d="M35 6 12 35l14-2-5 25 31-36-17 4 7-20Z"></path>
+            </svg>
+          </div>
+          <div>
+            <p class="brand-title">Dragonwilds</p>
+            <p class="brand-subtitle">Server Control</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Main">
+          <button class="nav-item active" data-view="dashboard">
+            <span class="nav-icon">D</span>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-item" data-view="install">
+            <span class="nav-icon">I</span>
+            <span>Install</span>
+          </button>
+          <button class="nav-item" data-view="server">
+            <span class="nav-icon">S</span>
+            <span>Server</span>
+          </button>
+          <button class="nav-item" data-view="settings">
+            <span class="nav-icon">C</span>
+            <span>Settings</span>
+          </button>
+          <button class="nav-item" data-view="backups">
+            <span class="nav-icon">B</span>
+            <span>Backups</span>
+          </button>
+          <button class="nav-item" data-view="logs">
+            <span class="nav-icon">L</span>
+            <span>Logs</span>
+          </button>
+          <button class="nav-item" data-view="deploy">
+            <span class="nav-icon">P</span>
+            <span>Deploy</span>
+          </button>
+        </nav>
+
+        <div class="side-footer">
+          <div class="mini-stat">
+            <span>App Version</span>
+            <strong id="appVersion">0.1.0</strong>
+          </div>
+          <div class="mini-stat">
+            <span>Profile</span>
+            <strong>Local</strong>
+          </div>
+          <div class="system-ok">
+            <span class="status-dot" id="footerStatusDot"></span>
+            <span id="footerStatusText">Checking status</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="top-stat">
+            <span class="label">Server Status</span>
+            <strong id="serverStatus">Unknown</strong>
+            <small id="serverPid">PID unavailable</small>
+          </div>
+          <div class="top-stat">
+            <span class="label">SteamCMD</span>
+            <strong id="steamStatus">Checking</strong>
+            <small id="steamPath">C:\SteamCMD</small>
+          </div>
+          <div class="top-stat wide">
+            <span class="label">Server Files</span>
+            <strong id="serverFileStatus">Checking</strong>
+            <small id="serverPath">C:\GameServers\RSDragonwildsDedicatedServer</small>
+          </div>
+          <div class="top-stat port-stat">
+            <span class="label">Selected Port</span>
+            <strong id="selectedPort">7777</strong>
+            <small id="portProbe">UDP host setting</small>
+          </div>
+          <div class="top-stat">
+            <span class="label">Players</span>
+            <strong id="maxPlayersTop">4</strong>
+            <small>Max players</small>
+          </div>
+        </header>
+
+        <section class="notice" id="taskNotice" hidden>
+          <div>
+            <strong id="taskName">Task running</strong>
+            <span id="taskDetails">Waiting for output...</span>
+          </div>
+          <button class="ghost-button" id="refreshNow">Refresh</button>
+        </section>
+
+        <div class="view active" id="dashboardView">
+          <section class="panel actions-panel">
+            <div class="panel-heading">
+              <h2>Quick Actions</h2>
+              <span id="actionHint">Actions run on this Windows server.</span>
+            </div>
+            <div class="action-grid">
+              <button class="action-button success" data-action="start">
+                <span class="button-icon play"></span>
+                Start
+              </button>
+              <button class="action-button danger" data-action="stop">
+                <span class="button-icon stop"></span>
+                Stop
+              </button>
+              <button class="action-button warm" data-action="restart">
+                <span class="button-icon restart"></span>
+                Restart
+              </button>
+              <button class="action-button" data-action="install">
+                <span class="button-icon wrench"></span>
+                Install / Repair
+              </button>
+              <button class="action-button" data-action="update">
+                <span class="button-icon sync"></span>
+                Update Server
+              </button>
+              <button class="action-button" data-action="backup">
+                <span class="button-icon stack"></span>
+                Backup Now
+              </button>
+            </div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-heading">
+              <h2>Health Check</h2>
+              <button class="ghost-button" id="runFullCheck">Run Check</button>
+            </div>
+            <div class="health-list" id="healthList"></div>
+          </section>
+
+          <section class="panel backup-panel">
+            <div class="panel-heading">
+              <h2>Recent Backups</h2>
+              <button class="ghost-button" data-action="backup">New Backup</button>
+            </div>
+            <div class="backup-list" id="recentBackups"></div>
+          </section>
+
+          <section class="panel settings-panel">
+            <div class="panel-heading">
+              <h2>Server Configuration</h2>
+              <button class="primary-button" id="saveSettingsTop">Save Settings</button>
+            </div>
+            <form class="settings-form" id="settingsForm">
+              <label>
+                <span>Server Name</span>
+                <input name="serverName" autocomplete="off">
+              </label>
+              <label>
+                <span>Server Password</span>
+                <input name="password" type="password" autocomplete="new-password">
+              </label>
+              <label>
+                <span>Max Players</span>
+                <input name="maxPlayers" type="number" min="1" max="128">
+              </label>
+              <label>
+                <span>Server Port</span>
+                <input name="port" type="number" min="1" max="65535">
+              </label>
+              <label>
+                <span>Query Port</span>
+                <input name="queryPort" type="number" min="1" max="65535">
+              </label>
+              <label>
+                <span>World Name</span>
+                <input name="worldName" autocomplete="off">
+              </label>
+              <label class="span-2">
+                <span>Launch Args</span>
+                <input name="launchArgs" autocomplete="off">
+              </label>
+              <label class="span-2">
+                <span>World Save Path</span>
+                <input name="saveDir" autocomplete="off">
+              </label>
+            </form>
+          </section>
+
+          <section class="panel logs-panel">
+            <div class="panel-heading compact">
+              <h2>Server Logs</h2>
+              <div class="log-tools">
+                <label class="inline-check">
+                  <input id="autoScroll" type="checkbox" checked>
+                  Auto scroll
+                </label>
+                <input id="logSearch" class="search-input" placeholder="Search logs...">
+              </div>
+            </div>
+            <pre id="logOutput" class="log-output"></pre>
+          </section>
+        </div>
+
+        <div class="view" id="installView">
+          <section class="panel full-panel">
+            <div class="panel-heading">
+              <h2>Install And Update</h2>
+              <span>Based on your current batch-file workflow.</span>
+            </div>
+            <div class="two-column">
+              <div class="stacked">
+                <button class="action-button success" data-action="install">Initial Install / Repair With Validate</button>
+                <button class="action-button" data-action="update">Normal Update Without Validate</button>
+                <p class="help-text">Normal updates intentionally skip validate so routine patches are faster. Use repair when the install is damaged or missing files.</p>
+              </div>
+              <div class="path-list" id="installPaths"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" id="serverView">
+          <section class="panel full-panel">
+            <div class="panel-heading">
+              <h2>Server Process</h2>
+              <span>Start, stop, and watch the executable from the control app.</span>
+            </div>
+            <div class="action-row">
+              <button class="action-button success" data-action="start">Start Server</button>
+              <button class="action-button danger" data-action="stop">Stop Server</button>
+              <button class="action-button warm" data-action="restart">Restart Server</button>
+            </div>
+            <div class="details-grid" id="serverDetails"></div>
+          </section>
+        </div>
+
+        <div class="view" id="settingsView">
+          <section class="panel full-panel">
+            <div class="panel-heading">
+              <h2>Settings And INI Mapping</h2>
+              <button class="primary-button" id="saveSettingsDetail">Save Settings</button>
+            </div>
+            <p class="help-text">
+              Public documentation for Dragonwilds INI keys was not available during this build, so these mappings are editable. Match the keys here to the generated DedicatedServer.ini on your server if Jagex changes names.
+            </p>
+            <div class="settings-detail-grid">
+              <div class="stacked">
+                <h3>Paths</h3>
+                <label><span>SteamCMD Folder</span><input id="steamcmdDir"></label>
+                <label><span>Server Folder</span><input id="serverDir"></label>
+                <label><span>DedicatedServer.ini</span><input id="configPath"></label>
+                <label><span>Log File</span><input id="logPath"></label>
+                <label><span>Backup Folder</span><input id="backupDir"></label>
+              </div>
+              <div class="stacked">
+                <h3>INI Keys</h3>
+                <div class="mapping-table" id="mappingTable"></div>
+                <button class="ghost-button" id="addCustomIni" type="button">Add Custom INI Value</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" id="backupsView">
+          <section class="panel full-panel">
+            <div class="panel-heading">
+              <h2>Backup Management</h2>
+              <button class="primary-button" data-action="backup">Backup Now</button>
+            </div>
+            <div class="backup-table" id="allBackups"></div>
+          </section>
+        </div>
+
+        <div class="view" id="logsView">
+          <section class="panel full-panel tall-panel">
+            <div class="panel-heading compact">
+              <h2>Logs</h2>
+              <div class="log-tools">
+                <button class="ghost-button" id="refreshLogs">Refresh Logs</button>
+              </div>
+            </div>
+            <pre id="fullLogOutput" class="log-output large"></pre>
+          </section>
+        </div>
+
+        <div class="view" id="deployView">
+          <section class="panel full-panel">
+            <div class="panel-heading">
+              <h2>Deployment Options</h2>
+              <span>Choose how you want this to launch on your Windows 11 server.</span>
+            </div>
+            <div class="deploy-options">
+              <article>
+                <h3>Option A: Desktop Launcher</h3>
+                <p>Recommended for the first server install. Copy the app folder to the Windows server, install Node.js 20 or newer, then double-click the launcher.</p>
+              </article>
+              <article>
+                <h3>Option B: Electron Desktop App</h3>
+                <p>Best final polish. The same UI can be wrapped into an installer with a desktop icon and bundled Node runtime.</p>
+              </article>
+              <article>
+                <h3>Option C: Windows Service + Web UI</h3>
+                <p>Best if you want to control the server from another PC. The service runs in the background and exposes the dashboard on your LAN or behind VPN.</p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

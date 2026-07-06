@@ -1,0 +1,16 @@
+{
+  "name": "dragonwilds-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows 11 local control panel for a RuneScape: Dragonwilds dedicated server.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "smoke": "node scripts/smoke-test.js",
+    "test": "node scripts/smoke-test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
