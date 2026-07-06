@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 - Live install console and first-run fixes
+
+- Added live task console output for install, repair, update, backup, and stop tasks with much larger retained output.
+- Added console input controls so admins can type into a running SteamCMD task, send `quit`, or stop a stuck task from the app.
+- Fixed Dragonwilds dedicated server detection to prefer `RSDragonwildsServer.exe` and report installed files, missing executables, and Steam manifests separately.
+- Updated first-run behavior so fresh install is prominent only while server files are missing; once installed, normal update controls are emphasized and repair requires extra confirmation.
+- Changed settings saves so `DedicatedServer.ini` is not created prematurely before the game server has generated it.
+- Replaced fallback letter/C-shaped action icons with real SVG icons.
+- Reworked dashboard sizing so the sidebar footer and live logs fit inside the app window without whole-page scrolling.
+
 ## 0.3.0 - GitHub Releases auto-update
 
 - Added `electron-updater` integration so the packaged desktop app checks GitHub Releases on launch.

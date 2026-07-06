@@ -7,7 +7,7 @@ This app is based on the existing batch-file workflow:
 - SteamCMD app ID: `4019830`
 - SteamCMD folder: `C:\SteamCMD`
 - Server install folder: `C:\GameServers\RSDragonwildsDedicatedServer`
-- Dedicated executable: `RSDragonwilds.exe`
+- Dedicated executable: `RSDragonwildsServer.exe`
 - Config path: `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`
 - Save path: `RSDragonwilds\Saved\Savegames`
 - Log path: `RSDragonwilds\Saved\Logs\RSDragonwilds.log`

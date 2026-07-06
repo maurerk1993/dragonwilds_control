@@ -25,6 +25,16 @@ const activityLogPath = path.join(dataDir, "activity.log");
 let activeTask = null;
 let serverProcess = null;
 let controlServer = null;
+let serverDetectionCache = null;
+
+const serverExeCandidates = [
+  "RSDragonwildsServer.exe",
+  "RSDragonwilds.exe"
+];
+const taskOutputLimit = 5000;
+const taskOutputSnapshotLimit = 1200;
+const activityLogSnapshotLimit = 1800;
+const serverLogSnapshotLimit = 1500;
 
 const defaultProfile = {
   appId: "4019830",
@@ -118,8 +128,13 @@ async function getProfile() {
 async function saveProfile(profile) {
   const next = deepMerge(defaultProfile, profile);
   await writeJson(profilePath, next);
-  if (next.writeIniOnSave) {
+  serverDetectionCache = null;
+  if (next.writeIniOnSave && exists(next.paths.configPath)) {
     await writeDedicatedServerIni(next);
+  } else if (next.writeIniOnSave) {
+    appendActivity(
+      "Settings saved to profile. DedicatedServer.ini is not present yet; the game server usually creates it on first start."
+    );
   }
   return next;
 }
@@ -227,14 +242,65 @@ function exists(filePath) {
   }
 }
 
+function steamAppManifestCandidates(profile) {
+  return [
+    path.join(profile.paths.serverDir, "steamapps", `appmanifest_${profile.appId}.acf`),
+    path.join(profile.paths.steamcmdDir, "steamapps", `appmanifest_${profile.appId}.acf`)
+  ];
+}
+
+function looksLikeServerExe(fileName) {
+  const lower = fileName.toLowerCase();
+  return lower.endsWith(".exe") && lower.includes("dragonwilds") && lower.includes("server");
+}
+
+async function countServerPayloadFiles(serverDir, limit = 8) {
+  if (!exists(serverDir)) return 0;
+  const queue = [serverDir];
+  let seen = 0;
+  let scannedDirectories = 0;
+
+  while (queue.length && scannedDirectories < 80 && seen < limit) {
+    const current = queue.shift();
+    scannedDirectories += 1;
+    let entries = [];
+    try {
+      entries = await fsp.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.name === "." || entry.name === "..") continue;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isFile()) {
+        seen += 1;
+        if (seen >= limit) break;
+      } else if (entry.isDirectory() && !["backups", "savegames"].includes(entry.name.toLowerCase())) {
+        queue.push(fullPath);
+      }
+    }
+  }
+
+  return seen;
+}
+
 async function findServerExe(serverDir) {
-  const rootExe = path.join(serverDir, "RSDragonwilds.exe");
-  if (exists(rootExe)) return rootExe;
   if (!exists(serverDir)) return null;
 
+  for (const fileName of serverExeCandidates) {
+    const directPath = path.join(serverDir, fileName);
+    if (exists(directPath)) return directPath;
+  }
+
   const queue = [serverDir];
-  while (queue.length) {
+  let fallback = null;
+  let scannedDirectories = 0;
+  const candidateSet = new Set(serverExeCandidates.map((name) => name.toLowerCase()));
+
+  while (queue.length && scannedDirectories < 650) {
     const current = queue.shift();
+    scannedDirectories += 1;
     let entries = [];
     try {
       entries = await fsp.readdir(current, { withFileTypes: true });
@@ -243,15 +309,59 @@ async function findServerExe(serverDir) {
     }
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
-      if (entry.isFile() && entry.name.toLowerCase() === "rsdragonwilds.exe") {
-        return fullPath;
-      }
-      if (entry.isDirectory() && queue.length < 400) {
+      if (entry.isFile()) {
+        const lowerName = entry.name.toLowerCase();
+        if (candidateSet.has(lowerName)) {
+          return fullPath;
+        }
+        if (!fallback && looksLikeServerExe(entry.name)) {
+          fallback = fullPath;
+        }
+      } else if (entry.isDirectory()) {
         queue.push(fullPath);
       }
     }
   }
-  return null;
+
+  return fallback;
+}
+
+async function detectServerInstall(profile) {
+  const cacheKey = [
+    profile.appId,
+    profile.paths.serverDir,
+    profile.paths.steamcmdDir
+  ].join("|");
+  const now = Date.now();
+  if (
+    serverDetectionCache &&
+    serverDetectionCache.key === cacheKey &&
+    now - serverDetectionCache.checkedAt < 1800
+  ) {
+    return serverDetectionCache.result;
+  }
+
+  const serverDirExists = exists(profile.paths.serverDir);
+  const serverExe = await findServerExe(profile.paths.serverDir);
+  const manifestCandidates = steamAppManifestCandidates(profile);
+  const manifestPath = manifestCandidates.find((candidate) => exists(candidate)) || null;
+  const payloadFileCount = await countServerPayloadFiles(profile.paths.serverDir);
+  const installed = Boolean(serverExe || manifestPath || payloadFileCount >= 3);
+  const result = {
+    installed,
+    serverDirExists,
+    serverExe,
+    manifestPath,
+    payloadFileCount,
+    expectedExecutables: serverExeCandidates
+  };
+
+  serverDetectionCache = {
+    key: cacheKey,
+    checkedAt: now,
+    result
+  };
+  return result;
 }
 
 async function readLastLines(filePath, lineCount = 300) {
@@ -286,12 +396,39 @@ function taskSnapshot() {
     startedAt: activeTask.startedAt,
     finishedAt: activeTask.finishedAt,
     exitCode: activeTask.exitCode,
-    recentOutput: activeTask.output.slice(-80)
+    canReceiveInput:
+      ["running", "stopping"].includes(activeTask.status) &&
+      Boolean(activeTask.child?.stdin && !activeTask.child.stdin.destroyed),
+    outputLineCount: activeTask.output.length,
+    recentOutput: activeTask.output.slice(-taskOutputSnapshotLimit)
   };
 }
 
+function pushTaskOutput(task, line) {
+  const cleanLine = String(line || "").replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").trimEnd();
+  if (!cleanLine.trim()) return;
+  task.output.push(cleanLine);
+  if (task.output.length > taskOutputLimit) {
+    task.output.splice(0, task.output.length - taskOutputLimit);
+  }
+  appendActivity(`${task.name}: ${cleanLine}`);
+}
+
+function handleTaskOutput(task, chunk) {
+  const text = task.outputBuffer + chunk.toString();
+  const parts = text.split(/\r\n|\n|\r/);
+  task.outputBuffer = parts.pop() || "";
+  for (const line of parts) {
+    pushTaskOutput(task, line);
+  }
+  if (task.outputBuffer.length > 240) {
+    pushTaskOutput(task, task.outputBuffer);
+    task.outputBuffer = "";
+  }
+}
+
 function beginTask(name, command, args, options = {}) {
-  if (activeTask && activeTask.status === "running") {
+  if (activeTask && ["running", "stopping"].includes(activeTask.status)) {
     throw new Error(`Task already running: ${activeTask.name}`);
   }
 
@@ -303,38 +440,79 @@ function beginTask(name, command, args, options = {}) {
     startedAt: timestamp(),
     finishedAt: null,
     exitCode: null,
-    output: []
+    output: [],
+    outputBuffer: "",
+    child: null
   };
   activeTask = task;
   appendActivity(`Task started: ${name}`);
 
   const child = spawn(command, args, {
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
     ...options
   });
+  task.child = child;
 
-  const onOutput = (chunk) => {
-    const text = chunk.toString();
-    for (const line of text.split(/\r?\n/).filter(Boolean)) {
-      task.output.push(line);
-      appendActivity(`${name}: ${line}`);
-    }
-  };
-
-  child.stdout?.on("data", onOutput);
-  child.stderr?.on("data", onOutput);
+  child.stdout?.on("data", (chunk) => handleTaskOutput(task, chunk));
+  child.stderr?.on("data", (chunk) => handleTaskOutput(task, chunk));
   child.on("error", (error) => {
     task.status = "failed";
     task.finishedAt = timestamp();
-    task.output.push(error.message);
+    pushTaskOutput(task, error.message);
     appendActivity(`Task failed to start: ${name}: ${error.message}`);
   });
   child.on("close", (exitCode) => {
+    if (task.outputBuffer.trim()) {
+      pushTaskOutput(task, task.outputBuffer);
+      task.outputBuffer = "";
+    }
     task.status = exitCode === 0 ? "completed" : "failed";
     task.exitCode = exitCode;
     task.finishedAt = timestamp();
+    serverDetectionCache = null;
     appendActivity(`Task finished: ${name} (exit ${exitCode})`);
   });
+
+  return taskSnapshot();
+}
+
+function sendTaskInput(input) {
+  if (!activeTask || !["running", "stopping"].includes(activeTask.status)) {
+    throw new Error("No running task is available for console input.");
+  }
+  const text = String(input || "").trimEnd();
+  if (!text) {
+    throw new Error("Type a command before sending console input.");
+  }
+  if (!activeTask.child?.stdin || activeTask.child.stdin.destroyed) {
+    throw new Error("The running task is not accepting console input.");
+  }
+
+  activeTask.child.stdin.write(`${text}${os.EOL}`);
+  pushTaskOutput(activeTask, `> ${text}`);
+  return taskSnapshot();
+}
+
+function stopActiveTask() {
+  if (!activeTask || !["running", "stopping"].includes(activeTask.status)) {
+    throw new Error("No running task is available to stop.");
+  }
+  if (activeTask.status !== "stopping") {
+    activeTask.status = "stopping";
+    pushTaskOutput(activeTask, "Stop requested from the control app.");
+  }
+
+  if (process.platform === "win32" && activeTask.child?.pid) {
+    const killer = spawn("taskkill.exe", ["/PID", String(activeTask.child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    killer.stdout?.on("data", (chunk) => handleTaskOutput(activeTask, chunk));
+    killer.stderr?.on("data", (chunk) => handleTaskOutput(activeTask, chunk));
+  } else {
+    activeTask.child?.kill("SIGTERM");
+  }
 
   return taskSnapshot();
 }
@@ -399,15 +577,28 @@ async function startGameServer(profile) {
     throw new Error("Server process is already running from this control app.");
   }
 
-  const serverExe = await findServerExe(profile.paths.serverDir);
-  if (!serverExe) {
-    throw new Error("Could not find RSDragonwilds.exe. Install or repair the server first.");
+  const install = await detectServerInstall(profile);
+  if (!install.serverExe) {
+    if (install.installed) {
+      throw new Error(
+        `Server files were found, but no runnable executable was detected. Expected one of: ${serverExeCandidates.join(", ")}.`
+      );
+    }
+    throw new Error("The Dragonwilds dedicated server is not installed yet. Run the initial install first.");
   }
 
   const args = splitArgs(profile.server.launchArgs);
-  appendActivity(`Starting server: ${serverExe} ${args.join(" ")}`);
-  serverProcess = spawn(serverExe, args, {
-    cwd: path.dirname(serverExe),
+  if (exists(profile.paths.configPath)) {
+    await writeDedicatedServerIni(profile);
+  } else {
+    appendActivity(
+      "DedicatedServer.ini is not present before launch. Starting server first so the game can generate its config files."
+    );
+  }
+
+  appendActivity(`Starting server: ${install.serverExe} ${args.join(" ")}`);
+  serverProcess = spawn(install.serverExe, args, {
+    cwd: path.dirname(install.serverExe),
     windowsHide: false
   });
 
@@ -430,7 +621,16 @@ function stopGameServer() {
     const pid = serverProcess.pid;
     return beginTask("Stop server process", "taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
   }
-  return beginTask("Stop RSDragonwilds.exe", "taskkill.exe", ["/IM", "RSDragonwilds.exe", "/T", "/F"]);
+  const script = [
+    "$stopped=$false",
+    `foreach ($name in ${psArray(serverExeCandidates)}) {`,
+    "  & taskkill.exe /IM $name /T /F",
+    "  if ($LASTEXITCODE -eq 0) { $stopped=$true }",
+    "}",
+    "if (-not $stopped) { Write-Output 'No Dragonwilds server process was running.' }",
+    "exit 0"
+  ].join("; ");
+  return powershellTask("Stop Dragonwilds server processes", script);
 }
 
 async function listBackups(profile) {
@@ -519,10 +719,10 @@ function checkTcpPort(portNumber) {
 async function getStatus() {
   const profile = await getProfile();
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
-  const serverExe = await findServerExe(profile.paths.serverDir);
+  const install = await detectServerInstall(profile);
   const backups = await listBackups(profile);
-  const logLines = await readLastLines(profile.paths.logPath, 120);
-  const activityLines = await readLastLines(activityLogPath, 80);
+  const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit);
+  const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit);
   const tcpPortOpen = await checkTcpPort(profile.server.port);
 
   return {
@@ -535,8 +735,14 @@ async function getStatus() {
     tcpPortOpen,
     paths: {
       steamcmd: { path: steamcmdExe, exists: exists(steamcmdExe) },
-      serverDir: { path: profile.paths.serverDir, exists: exists(profile.paths.serverDir) },
-      serverExe: { path: serverExe, exists: Boolean(serverExe) },
+      serverDir: { path: profile.paths.serverDir, exists: install.serverDirExists },
+      serverInstall: {
+        installed: install.installed,
+        manifestPath: install.manifestPath,
+        payloadFileCount: install.payloadFileCount,
+        expectedExecutables: install.expectedExecutables
+      },
+      serverExe: { path: install.serverExe, exists: Boolean(install.serverExe) },
       config: { path: profile.paths.configPath, exists: exists(profile.paths.configPath) },
       saves: { path: profile.paths.saveDir, exists: exists(profile.paths.saveDir) },
       log: { path: profile.paths.logPath, exists: exists(profile.paths.logPath) },
@@ -636,6 +842,17 @@ async function handleApi(request, response, url) {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/tasks/active/input") {
+      const body = await readBody(request);
+      sendJson(response, 202, { task: sendTaskInput(body.input || body.command || "") });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/tasks/active/stop") {
+      sendJson(response, 202, { task: stopActiveTask() });
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/actions/start") {
       sendJson(response, 202, { server: await startGameServer(await getProfile()) });
       return;
@@ -676,7 +893,7 @@ async function handleApi(request, response, url) {
 
     if (request.method === "GET" && url.pathname === "/api/logs") {
       const profile = await getProfile();
-      const count = Number(url.searchParams.get("lines") || 300);
+      const count = Math.min(Number(url.searchParams.get("lines") || 1200), 5000);
       sendJson(response, 200, {
         logLines: await readLastLines(profile.paths.logPath, count),
         activityLines: await readLastLines(activityLogPath, count)

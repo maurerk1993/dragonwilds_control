@@ -1,31 +1,31 @@
 {
-  "version": "0.3.0",
-  "title": "GitHub Releases auto-update",
+  "version": "0.3.1",
+  "title": "Live install console and first-run fixes",
   "date": "2026-07-06",
   "notes": [
     {
-      "heading": "Checks for app updates on launch",
-      "body": "The packaged desktop app now checks GitHub Releases when it starts and downloads newer versions automatically."
+      "heading": "Live install console",
+      "body": "Install and update tasks now refresh quickly while they run, keep much more output, and show active SteamCMD progress in the log panel."
     },
     {
-      "heading": "Install updates without hunting for files",
-      "body": "When an app update is downloaded, Dragonwilds Server Control prompts you to restart and install it."
+      "heading": "Interactive task input",
+      "body": "You can type into a running install/update task, send quit, or stop the task from the log panel if SteamCMD gets stuck."
     },
     {
-      "heading": "Manual update controls",
-      "body": "The Deploy page now shows app update status, last check time, download progress, and a Check Now button."
+      "heading": "Better server detection",
+      "body": "The app now looks for the dedicated server executable name used by the Steam app and shows clearer install diagnostics."
     },
     {
-      "heading": "Desktop shortcuts are handled by the installer",
-      "body": "The recommended setup installer creates Start Menu and desktop shortcuts so the control panel is easy to open after installation."
+      "heading": "Safer first-run flow",
+      "body": "A fresh install is shown only when server files are missing. After install, normal update controls are emphasized and repair asks for extra confirmation."
     },
     {
-      "heading": "Administrator launch is automatic",
-      "body": "The packaged app relaunches through Windows UAC so it can create and manage the default SteamCMD and server folders."
+      "heading": "Cleaner layout",
+      "body": "The dashboard now keeps the sidebar footer and live logs visible without forcing you to scroll the whole app window."
     },
     {
-      "heading": "Server data stays on the server",
-      "body": "Installed-app settings are stored under the Windows app data folder, while game files, saves, logs, and backups remain in the paths you configure."
+      "heading": "Real button icons",
+      "body": "Action buttons and navigation now use SVG icons instead of fallback letters or C-shaped placeholders."
     }
   ]
 }

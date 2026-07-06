@@ -1,6 +1,6 @@
 # Deployment Options
 
-This project now supports an installable Windows desktop app because the control panel needs direct access to SteamCMD, `RSDragonwilds.exe`, save files, logs, and backups on the server machine.
+This project now supports an installable Windows desktop app because the control panel needs direct access to SteamCMD, `RSDragonwildsServer.exe`, save files, logs, and backups on the server machine.
 
 ## Option A: Setup Installer
 

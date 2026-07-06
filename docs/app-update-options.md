@@ -34,8 +34,8 @@ Important notes:
 4. Create and push a tag that matches the app version, for example:
 
    ```powershell
-   git tag v0.3.0
-   git push origin v0.3.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
 5. GitHub Actions runs `.github/workflows/release.yml`.

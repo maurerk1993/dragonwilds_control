@@ -7,6 +7,50 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-dashboard" viewBox="0 0 24 24">
+        <path d="M4 5h7v7H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 14h7v5H4z"></path>
+      </symbol>
+      <symbol id="icon-install" viewBox="0 0 24 24">
+        <path d="M11 3h2v9l3.5-3.5 1.4 1.4L12 15.8 6.1 9.9l1.4-1.4L11 12zM5 19h14v2H5z"></path>
+      </symbol>
+      <symbol id="icon-server" viewBox="0 0 24 24">
+        <path d="M5 3h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm0 12h14a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2Zm2-8v2h2V7zm0 10v2h2v-2z"></path>
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <path d="M10.6 2h2.8l.5 2.6 1.6.7 2.2-1.5 2 2-1.5 2.2.7 1.6 2.6.5v2.8l-2.6.5-.7 1.6 1.5 2.2-2 2-2.2-1.5-1.6.7-.5 2.6h-2.8l-.5-2.6-1.6-.7-2.2 1.5-2-2L5.8 15l-.7-1.6-2.6-.5v-2.8l2.6-.5.7-1.6-1.5-2.2 2-2 2.2 1.5 1.6-.7zm1.4 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"></path>
+      </symbol>
+      <symbol id="icon-backup" viewBox="0 0 24 24">
+        <path d="M4 5h16v4H4zM4 10h16v4H4zM4 15h16v4H4zM7 6.5v1h10v-1zm0 5v1h10v-1zm0 5v1h10v-1z"></path>
+      </symbol>
+      <symbol id="icon-logs" viewBox="0 0 24 24">
+        <path d="M5 3h14v18H5zM8 7h8v2H8zm0 4h8v2H8zm0 4h5v2H8z"></path>
+      </symbol>
+      <symbol id="icon-deploy" viewBox="0 0 24 24">
+        <path d="M12 2 4 6v6c0 5 3.3 8.6 8 10 4.7-1.4 8-5 8-10V6zm0 4 4 4h-3v6h-2v-6H8z"></path>
+      </symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24">
+        <path d="M8 5v14l11-7z"></path>
+      </symbol>
+      <symbol id="icon-stop" viewBox="0 0 24 24">
+        <path d="M7 7h10v10H7z"></path>
+      </symbol>
+      <symbol id="icon-restart" viewBox="0 0 24 24">
+        <path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h8V3z"></path>
+      </symbol>
+      <symbol id="icon-wrench" viewBox="0 0 24 24">
+        <path d="M21 6.5a6.5 6.5 0 0 1-8.6 6.1l-7 7a2 2 0 0 1-2.8-2.8l7-7A6.5 6.5 0 0 1 17.5 3L14 6.5 17.5 10z"></path>
+      </symbol>
+      <symbol id="icon-sync" viewBox="0 0 24 24">
+        <path d="M7 7h9.2L13 3.8 14.4 2 21 8l-6.6 6-1.4-1.8L16.2 9H7a4 4 0 0 0-4 4 4 4 0 0 0 4 4h3v2H7a6 6 0 0 1 0-12zm10 10H8.8l3.2 3.2L10.6 22 4 16l6.6-6 1.4 1.8L8.8 15H17a4 4 0 0 0 4-4h2a6 6 0 0 1-6 6z"></path>
+      </symbol>
+      <symbol id="icon-send" viewBox="0 0 24 24">
+        <path d="M3 20 21 12 3 4v6l11 2-11 2z"></path>
+      </symbol>
+      <symbol id="icon-shield" viewBox="0 0 24 24">
+        <path d="M12 2 5 5v6c0 4.5 2.8 8.5 7 10 4.2-1.5 7-5.5 7-10V5zm-1 5h2v6h-2zm0 8h2v2h-2z"></path>
+      </symbol>
+    </svg>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -23,31 +67,31 @@
 
         <nav class="nav-list" aria-label="Main">
           <button class="nav-item active" data-view="dashboard">
-            <span class="nav-icon">D</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-dashboard"></use></svg></span>
             <span>Dashboard</span>
           </button>
           <button class="nav-item" data-view="install">
-            <span class="nav-icon">I</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-install"></use></svg></span>
             <span>Install</span>
           </button>
           <button class="nav-item" data-view="server">
-            <span class="nav-icon">S</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-server"></use></svg></span>
             <span>Server</span>
           </button>
           <button class="nav-item" data-view="settings">
-            <span class="nav-icon">C</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-settings"></use></svg></span>
             <span>Settings</span>
           </button>
           <button class="nav-item" data-view="backups">
-            <span class="nav-icon">B</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-backup"></use></svg></span>
             <span>Backups</span>
           </button>
           <button class="nav-item" data-view="logs">
-            <span class="nav-icon">L</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-logs"></use></svg></span>
             <span>Logs</span>
           </button>
           <button class="nav-item" data-view="deploy">
-            <span class="nav-icon">P</span>
+            <span class="nav-icon"><svg class="icon"><use href="#icon-deploy"></use></svg></span>
             <span>Deploy</span>
           </button>
         </nav>
@@ -55,7 +99,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.3.0</strong>
+            <strong id="appVersion">0.3.1</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -106,34 +150,42 @@
         </section>
 
         <div class="view active" id="dashboardView">
+          <section class="install-gate" id="installGate" hidden>
+            <div class="gate-icon"><svg class="icon"><use href="#icon-shield"></use></svg></div>
+            <div>
+              <strong>Dragonwilds server files are not installed yet</strong>
+              <p>Run the initial SteamCMD install first. Start, update, and backup controls unlock after the server files are detected.</p>
+            </div>
+            <button class="action-button success" data-action="install" data-show-when-missing>
+              <svg class="button-icon" aria-hidden="true"><use href="#icon-install"></use></svg>
+              Install Server
+            </button>
+          </section>
+
           <section class="panel actions-panel">
             <div class="panel-heading">
               <h2>Quick Actions</h2>
               <span id="actionHint">Actions run on this Windows server.</span>
             </div>
             <div class="action-grid">
-              <button class="action-button success" data-action="start">
-                <span class="button-icon play"></span>
+              <button class="action-button success" data-action="start" data-requires-exe>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-play"></use></svg>
                 Start
               </button>
               <button class="action-button danger" data-action="stop">
-                <span class="button-icon stop"></span>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-stop"></use></svg>
                 Stop
               </button>
-              <button class="action-button warm" data-action="restart">
-                <span class="button-icon restart"></span>
+              <button class="action-button warm" data-action="restart" data-requires-exe>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-restart"></use></svg>
                 Restart
               </button>
-              <button class="action-button" data-action="install">
-                <span class="button-icon wrench"></span>
-                Install / Repair
-              </button>
-              <button class="action-button" data-action="update">
-                <span class="button-icon sync"></span>
+              <button class="action-button" data-action="update" data-requires-installed>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-sync"></use></svg>
                 Update Server
               </button>
-              <button class="action-button" data-action="backup">
-                <span class="button-icon stack"></span>
+              <button class="action-button" data-action="backup" data-requires-saves>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-backup"></use></svg>
                 Backup Now
               </button>
             </div>
@@ -141,7 +193,10 @@
 
           <section class="panel health-panel">
             <div class="panel-heading">
-              <h2>Health Check</h2>
+              <div>
+                <h2>Health Check</h2>
+                <span id="healthLastChecked">Not checked yet</span>
+              </div>
               <button class="ghost-button" id="runFullCheck">Run Check</button>
             </div>
             <div class="health-list" id="healthList"></div>
@@ -150,7 +205,7 @@
           <section class="panel backup-panel">
             <div class="panel-heading">
               <h2>Recent Backups</h2>
-              <button class="ghost-button" data-action="backup">New Backup</button>
+              <button class="ghost-button" data-action="backup" data-requires-saves>New Backup</button>
             </div>
             <div class="backup-list" id="recentBackups"></div>
           </section>
@@ -207,6 +262,16 @@
                 <input id="logSearch" class="search-input" placeholder="Search logs...">
               </div>
             </div>
+            <form class="console-form" data-console-form>
+              <input class="console-input" name="command" autocomplete="off" placeholder="Type console input for the running install/update task...">
+              <button class="ghost-button" type="submit">
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
+                Send
+              </button>
+              <button class="ghost-button" type="button" data-console-send="quit">Send Quit</button>
+              <button class="ghost-button danger-text" type="button" data-stop-task>Stop Task</button>
+              <span class="console-state" data-console-state>No running console task</span>
+            </form>
             <pre id="logOutput" class="log-output"></pre>
           </section>
         </div>
@@ -219,9 +284,19 @@
             </div>
             <div class="two-column">
               <div class="stacked">
-                <button class="action-button success" data-action="install">Initial Install / Repair With Validate</button>
-                <button class="action-button" data-action="update">Normal Update Without Validate</button>
-                <p class="help-text">Normal updates intentionally skip validate so routine patches are faster. Use repair when the install is damaged or missing files.</p>
+                <button class="action-button success" data-action="install" data-show-when-missing>
+                  <svg class="button-icon" aria-hidden="true"><use href="#icon-install"></use></svg>
+                  Initial Install With Validate
+                </button>
+                <button class="action-button" data-action="update" data-requires-installed>
+                  <svg class="button-icon" aria-hidden="true"><use href="#icon-sync"></use></svg>
+                  Update Installed Server
+                </button>
+                <button class="action-button warm" data-action="install" data-show-when-installed data-confirm-repair hidden>
+                  <svg class="button-icon" aria-hidden="true"><use href="#icon-wrench"></use></svg>
+                  Advanced Repair / Validate
+                </button>
+                <p class="help-text" id="installModeHelp">Run the initial install first. After files are detected, this page switches to update-first controls and repair requires extra confirmation.</p>
               </div>
               <div class="path-list" id="installPaths"></div>
             </div>
@@ -235,9 +310,18 @@
               <span>Start, stop, and watch the executable from the control app.</span>
             </div>
             <div class="action-row">
-              <button class="action-button success" data-action="start">Start Server</button>
-              <button class="action-button danger" data-action="stop">Stop Server</button>
-              <button class="action-button warm" data-action="restart">Restart Server</button>
+              <button class="action-button success" data-action="start" data-requires-exe>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-play"></use></svg>
+                Start Server
+              </button>
+              <button class="action-button danger" data-action="stop">
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-stop"></use></svg>
+                Stop Server
+              </button>
+              <button class="action-button warm" data-action="restart" data-requires-exe>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-restart"></use></svg>
+                Restart Server
+              </button>
             </div>
             <div class="details-grid" id="serverDetails"></div>
           </section>
@@ -274,7 +358,7 @@
           <section class="panel full-panel">
             <div class="panel-heading">
               <h2>Backup Management</h2>
-              <button class="primary-button" data-action="backup">Backup Now</button>
+              <button class="primary-button" data-action="backup" data-requires-saves>Backup Now</button>
             </div>
             <div class="backup-table" id="allBackups"></div>
           </section>
@@ -288,6 +372,16 @@
                 <button class="ghost-button" id="refreshLogs">Refresh Logs</button>
               </div>
             </div>
+            <form class="console-form" data-console-form>
+              <input class="console-input" name="command" autocomplete="off" placeholder="Type console input for the running install/update task...">
+              <button class="ghost-button" type="submit">
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
+                Send
+              </button>
+              <button class="ghost-button" type="button" data-console-send="quit">Send Quit</button>
+              <button class="ghost-button danger-text" type="button" data-stop-task>Stop Task</button>
+              <span class="console-state" data-console-state>No running console task</span>
+            </form>
             <pre id="fullLogOutput" class="log-output large"></pre>
           </section>
         </div>
@@ -326,7 +420,10 @@
                   <strong id="updateStatus">Unavailable</strong>
                   <p id="updateMessage">Updates are available from the packaged desktop app.</p>
                 </div>
-                <button class="action-button warm" id="installAppUpdate" disabled>Restart And Install</button>
+                <button class="action-button warm" id="installAppUpdate" disabled>
+                  <svg class="button-icon" aria-hidden="true"><use href="#icon-sync"></use></svg>
+                  Restart And Install
+                </button>
               </div>
               <div class="details-grid" id="updateDetails"></div>
             </div>

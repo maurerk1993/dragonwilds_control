@@ -25,13 +25,19 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+}
+
 [hidden] {
   display: none !important;
 }
 
 body {
   margin: 0;
+  height: 100%;
   min-width: 320px;
+  overflow: hidden;
   background:
     radial-gradient(circle at 18% 0%, rgba(66, 91, 47, 0.26), transparent 34rem),
     linear-gradient(135deg, #0e1110 0%, #191812 48%, #0f1211 100%);
@@ -47,20 +53,45 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon,
+.button-icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: grid;
   grid-template-columns: 270px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100vh;
   padding: 18px 14px;
   border-right: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(17, 19, 18, 0.98), rgba(24, 27, 23, 0.96));
   box-shadow: inset -1px 0 rgba(255, 255, 255, 0.03);
+  overflow: hidden;
 }
 
 .brand {
@@ -110,6 +141,7 @@ button {
   display: grid;
   gap: 6px;
   margin-top: 22px;
+  overflow: auto;
   scrollbar-width: none;
 }
 
@@ -149,9 +181,15 @@ button {
   font-weight: 800;
 }
 
+.nav-icon .icon {
+  width: 15px;
+  height: 15px;
+}
+
 .side-footer {
   margin-top: auto;
   padding: 18px 8px 0;
+  flex: 0 0 auto;
   display: grid;
   gap: 14px;
   border-top: 1px solid var(--line-soft);
@@ -195,10 +233,17 @@ button {
 
 .main {
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
   padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
 }
 
 .topbar {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(188px, 1fr));
   gap: 1px;
@@ -207,6 +252,11 @@ button {
   overflow: hidden;
   background: var(--line);
   box-shadow: var(--shadow);
+}
+
+.view.active:not(#dashboardView) {
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .top-stat {
@@ -250,7 +300,7 @@ button {
 }
 
 .notice {
-  margin-top: 14px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -273,16 +323,22 @@ button {
 
 .view.active {
   display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 #dashboardView {
   grid-template-columns: minmax(360px, 1.05fr) minmax(320px, 0.8fr) minmax(360px, 0.9fr);
+  grid-template-rows: auto minmax(0, 1fr) minmax(220px, 0.82fr);
   gap: 14px;
-  margin-top: 14px;
+  overflow: hidden;
 }
 
 .panel {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: linear-gradient(180deg, rgba(29, 33, 29, 0.98), rgba(16, 19, 18, 0.98));
@@ -290,7 +346,42 @@ button {
   overflow: hidden;
 }
 
+.install-gate {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid rgba(93, 210, 116, 0.42);
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, rgba(26, 82, 40, 0.92), rgba(42, 33, 23, 0.84));
+  box-shadow: var(--shadow);
+}
+
+.install-gate p,
+.install-gate strong {
+  margin: 0;
+}
+
+.install-gate p {
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.gate-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--green-bright);
+}
+
 .panel-heading {
+  flex: 0 0 auto;
   min-height: 48px;
   display: flex;
   align-items: center;
@@ -339,9 +430,16 @@ button {
   grid-column: 1 / -1;
 }
 
+.actions-panel .action-grid,
+.settings-panel .settings-form,
+.logs-panel .log-output,
+.tall-panel .log-output {
+  flex: 1 1 auto;
+}
+
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   padding: 16px;
 }
@@ -449,12 +547,14 @@ button {
   display: grid;
   gap: 12px;
   padding: 16px;
+  min-height: 0;
 }
 
 .settings-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   background: var(--panel-2);
   color: var(--ink);
+  overflow: auto;
 }
 
 .settings-form label,
@@ -491,6 +591,7 @@ button {
 .deploy-options,
 .update-panel {
   padding: 16px;
+  min-height: 0;
 }
 
 .health-item,
@@ -515,6 +616,14 @@ button {
 .settings-detail-grid {
   background: var(--panel-2);
   color: var(--ink);
+}
+
+.health-list,
+.backup-list,
+.path-list,
+.backup-table {
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .health-item:last-child,
@@ -563,6 +672,42 @@ button {
   gap: 10px;
 }
 
+.console-form {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto minmax(180px, auto);
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(12, 15, 14, 0.92);
+}
+
+.console-input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(212, 173, 89, 0.28);
+  border-radius: 4px;
+  padding: 0 10px;
+  background: #0d100f;
+  color: var(--text);
+  outline: none;
+}
+
+.console-state {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.danger-text {
+  color: #ffb4b4;
+}
+
 .inline-check {
   display: flex;
   align-items: center;
@@ -581,8 +726,9 @@ button {
 
 .log-output {
   width: 100%;
-  min-height: 232px;
-  max-height: 280px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   margin: 0;
   padding: 14px;
   overflow: auto;
@@ -592,8 +738,8 @@ button {
 }
 
 .log-output.large {
-  min-height: 62vh;
-  max-height: 62vh;
+  min-height: 0;
+  max-height: none;
 }
 
 .full-panel {
@@ -761,6 +907,8 @@ button {
 @media (max-width: 1450px) {
   #dashboardView {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+    overflow: auto;
   }
 
   .actions-panel,
@@ -774,15 +922,29 @@ button {
   .logs-panel {
     grid-column: 1 / -1;
   }
+
+  .log-output {
+    min-height: 220px;
+    max-height: 340px;
+  }
 }
 
 @media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
   .app-shell {
     display: block;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
   .sidebar {
     min-height: auto;
+    height: auto;
+    overflow: visible;
     position: sticky;
     top: 0;
     z-index: 4;
@@ -815,7 +977,19 @@ button {
   }
 
   .main {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
     padding: 10px;
+  }
+
+  #dashboardView {
+    grid-template-rows: auto;
+    overflow: visible;
+  }
+
+  .view.active:not(#dashboardView) {
+    overflow: visible;
   }
 
   .topbar,
@@ -834,6 +1008,17 @@ button {
 
   .action-grid {
     grid-template-columns: 1fr;
+  }
+
+  .install-gate,
+  .console-form {
+    grid-template-columns: 1fr;
+  }
+
+  .log-output,
+  .log-output.large {
+    min-height: 260px;
+    max-height: 60vh;
   }
 
   .panel-heading,

@@ -1,4 +1,5 @@
 const http = require("http");
+const fs = require("fs/promises");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -78,12 +79,16 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.3.0") {
-    throw new Error(`Expected version 0.3.0, got ${app.version}`);
+  if (app.version !== "0.3.1") {
+    throw new Error(`Expected version 0.3.1, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
   const testServerDir = path.join(root, ".runtime-test", "server");
+  await fs.mkdir(testServerDir, { recursive: true });
+  await fs.writeFile(path.join(testServerDir, "RSDragonwildsServer.exe"), "fake exe for detection smoke test");
+  await fs.mkdir(path.join(testServerDir, "steamapps"), { recursive: true });
+  await fs.writeFile(path.join(testServerDir, "steamapps", "appmanifest_4019830.acf"), '"appid" "4019830"');
   profile.server.port = 28888;
   profile.server.name = "Smoke Test Dragonwilds Server";
   profile.paths.steamcmdDir = path.join(root, ".runtime-test", "steamcmd");
@@ -108,6 +113,12 @@ async function main() {
   if (status.selectedPort !== 28888) {
     throw new Error("Status did not report the saved server port.");
   }
+  if (!status.paths.serverInstall.installed) {
+    throw new Error("Status did not detect the fake dedicated server install.");
+  }
+  if (!status.paths.serverExe.path.endsWith("RSDragonwildsServer.exe")) {
+    throw new Error(`Status did not detect RSDragonwildsServer.exe: ${status.paths.serverExe.path}`);
+  }
 
   const page = await new Promise((resolve, reject) => {
     http.get(`http://127.0.0.1:${port}/`, (response) => {
@@ -118,6 +129,9 @@ async function main() {
   });
   if (!page.includes("Dragonwilds Server Control")) {
     throw new Error("Dashboard HTML did not load.");
+  }
+  if (!page.includes("data-console-form") || !page.includes("icon-restart")) {
+    throw new Error("Dashboard HTML is missing live console or SVG icon markup.");
   }
 
   console.log("Smoke test passed.");

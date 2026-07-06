@@ -4,7 +4,8 @@ const state = {
   update: null,
   releaseNotes: null,
   activeView: "dashboard",
-  refreshTimer: null
+  refreshTimer: null,
+  refreshInFlight: false
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -59,6 +60,18 @@ function setView(view) {
   $(`#${view}View`)?.classList.add("active");
 }
 
+function isServerInstalled(status = state.status) {
+  return Boolean(status?.paths?.serverInstall?.installed || status?.paths?.serverExe?.exists);
+}
+
+function hasServerExecutable(status = state.status) {
+  return Boolean(status?.paths?.serverExe?.exists);
+}
+
+function hasSaveFolder(status = state.status) {
+  return Boolean(status?.paths?.saves?.exists);
+}
+
 async function loadApp() {
   const payload = await api("/api/app");
   state.profile = payload.profile;
@@ -66,16 +79,40 @@ async function loadApp() {
   state.update = payload.update;
   state.releaseNotes = payload.releaseNotes;
   renderAll();
+  scheduleRefresh();
 }
 
-async function refreshStatus() {
-  state.status = await api("/api/status");
-  const updatePayload = await api("/api/updates");
-  state.update = updatePayload.update;
-  renderStatus();
-  renderUpdateState();
-  renderBackups();
-  renderLogs();
+function taskIsActive() {
+  return ["running", "stopping"].includes(state.status?.task?.status);
+}
+
+function nextRefreshDelay() {
+  return taskIsActive() ? 900 : 4000;
+}
+
+function scheduleRefresh(delay = nextRefreshDelay()) {
+  clearTimeout(state.refreshTimer);
+  state.refreshTimer = setTimeout(refreshStatus, delay);
+}
+
+async function refreshStatus(options = {}) {
+  if (state.refreshInFlight) return;
+  state.refreshInFlight = true;
+  try {
+    state.status = await api("/api/status");
+    const updatePayload = await api("/api/updates");
+    state.update = updatePayload.update;
+    renderStatus();
+    renderUpdateState();
+    renderBackups();
+    renderLogs();
+    if (options.toastOnSuccess) {
+      toast("Health check refreshed.");
+    }
+  } finally {
+    state.refreshInFlight = false;
+    scheduleRefresh();
+  }
 }
 
 function renderAll() {
@@ -92,6 +129,8 @@ function renderStatus() {
   const status = state.status;
   const profile = state.profile;
   if (!status || !profile) return;
+  const installed = isServerInstalled(status);
+  const executableReady = hasServerExecutable(status);
 
   setText("appVersion", status.appVersion);
   setText("selectedPort", String(status.selectedPort));
@@ -100,9 +139,13 @@ function renderStatus() {
   setText("serverPid", status.serverPid ? `PID ${status.serverPid}` : "Process not owned by app");
   setText("steamStatus", status.paths.steamcmd.exists ? "READY" : "MISSING");
   setText("steamPath", status.paths.steamcmd.path);
-  setText("serverFileStatus", status.paths.serverExe.exists ? "READY" : "NOT INSTALLED");
-  setText("serverPath", status.paths.serverDir.path);
+  setText("serverFileStatus", executableReady ? "READY" : installed ? "FILES FOUND" : "NOT INSTALLED");
+  setText("serverPath", status.paths.serverExe.path || status.paths.serverDir.path);
   setText("portProbe", status.tcpPortOpen ? "TCP probe open" : "UDP setting; TCP closed");
+  setText(
+    "healthLastChecked",
+    status.generatedAt ? `Last checked ${new Date(status.generatedAt).toLocaleTimeString()}` : "Not checked yet"
+  );
 
   const footerDot = $("#footerStatusDot");
   footerDot.classList.toggle("online", status.serverRunning);
@@ -121,6 +164,8 @@ function renderStatus() {
   renderHealth(status);
   renderPaths(status);
   renderServerDetails(status);
+  renderInstallMode(status);
+  renderConsoleControls(status);
 }
 
 function healthValue(ok, goodText, badText) {
@@ -131,11 +176,29 @@ function healthValue(ok, goodText, badText) {
 }
 
 function renderHealth(status) {
+  const installed = isServerInstalled(status);
+  const executableReady = hasServerExecutable(status);
   const items = [
     ["SteamCMD", healthValue(status.paths.steamcmd.exists, "Ready", "Missing")],
-    ["Server executable", healthValue(status.paths.serverExe.exists, "Found", "Missing")],
-    ["DedicatedServer.ini", healthValue(status.paths.config.exists, "Found", "Will be created")],
-    ["Savegames folder", healthValue(status.paths.saves.exists, "Found", "Missing")],
+    ["Server files", healthValue(installed, "Installed", "Not installed")],
+    [
+      "Server executable",
+      executableReady
+        ? { text: "Found", className: "ok" }
+        : { text: installed ? "Missing executable" : "Missing", className: "bad" }
+    ],
+    [
+      "DedicatedServer.ini",
+      status.paths.config.exists
+        ? { text: "Found", className: "ok" }
+        : { text: installed ? "After first start" : "Not generated yet", className: "warn" }
+    ],
+    [
+      "Savegames folder",
+      status.paths.saves.exists
+        ? { text: "Found", className: "ok" }
+        : { text: installed ? "After first start" : "Missing", className: installed ? "warn" : "bad" }
+    ],
     ["Log file", healthValue(status.paths.log.exists, "Found", "No log yet")],
     ["Selected port", { text: `${status.selectedPort}`, className: status.tcpPortOpen ? "ok" : "warn" }],
     ["Backup folder", healthValue(status.paths.backups.exists, "Ready", "Will be created")]
@@ -156,8 +219,10 @@ function renderHealth(status) {
 function renderPaths(status) {
   const paths = [
     ["SteamCMD", status.paths.steamcmd.path],
+    ["Install status", isServerInstalled(status) ? "Server files detected" : "Server files not detected"],
     ["Server folder", status.paths.serverDir.path],
     ["Executable", status.paths.serverExe.path || "Not found yet"],
+    ["Steam manifest", status.paths.serverInstall?.manifestPath || "Not found yet"],
     ["Config", status.paths.config.path],
     ["Savegames", status.paths.saves.path],
     ["Log file", status.paths.log.path],
@@ -184,7 +249,8 @@ function renderServerDetails(status) {
     ["Configured server port", profile.server.port],
     ["Configured query port", profile.server.queryPort],
     ["Server folder", status.paths.serverDir.path],
-    ["Executable", status.paths.serverExe.path || "Not installed"]
+    ["Executable", status.paths.serverExe.path || "Not installed"],
+    ["Expected executable", (status.paths.serverInstall?.expectedExecutables || []).join(", ")]
   ];
 
   $("#serverDetails").innerHTML = details
@@ -208,7 +274,7 @@ function renderBackups() {
             <div class="backup-item">
               <div>
                 <div class="backup-name">${escapeHtml(backup.name)}</div>
-                <div class="backup-meta">${new Date(backup.modifiedAt).toLocaleString()} · ${formatBytes(backup.sizeBytes)}</div>
+                <div class="backup-meta">${new Date(backup.modifiedAt).toLocaleString()} &middot; ${formatBytes(backup.sizeBytes)}</div>
               </div>
               <button class="ghost-button" data-restore="${encodeURIComponent(backup.id)}">Restore</button>
             </div>
@@ -223,12 +289,20 @@ function renderBackups() {
 
 function renderLogs() {
   const search = ($("#logSearch")?.value || "").toLowerCase();
+  const task = state.status?.task;
+  const taskLines = task
+    ? [
+        `[TASK] ${task.name} - ${task.status}${task.outputLineCount ? ` (${task.outputLineCount} retained lines)` : ""}`,
+        ...(task.recentOutput || []).map((line) => `[TASK] ${line}`)
+      ]
+    : [];
   const combined = [
+    ...taskLines,
     ...(state.status?.logLines || []).map((line) => `[SERVER] ${line}`),
     ...(state.status?.activityLines || []).map((line) => `[CONTROL] ${line}`)
   ];
   const lines = search ? combined.filter((line) => line.toLowerCase().includes(search)) : combined;
-  const output = lines.slice(-420).join("\n") || "No logs found yet.";
+  const output = lines.slice(-1600).join("\n") || "No logs found yet.";
   $("#logOutput").textContent = output;
   $("#fullLogOutput").textContent = output;
   if ($("#autoScroll").checked) {
@@ -301,6 +375,8 @@ function renderMappings() {
 }
 
 function renderReleaseNotes() {
+  if (state.status && !isServerInstalled(state.status)) return;
+  if (state.status && isServerInstalled(state.status) && !hasServerExecutable(state.status)) return;
   const notes = state.releaseNotes?.notes || [];
   if (!notes.length) return;
   const text = notes.map((note) => `${note.heading}: ${note.body}`).join(" ");
@@ -353,6 +429,69 @@ function renderUpdateState() {
     .join("");
 }
 
+function renderInstallMode(status) {
+  const installed = isServerInstalled(status);
+  const executableReady = hasServerExecutable(status);
+  const savesReady = hasSaveFolder(status);
+  $("#installGate").hidden = installed;
+
+  $$("[data-show-when-missing]").forEach((element) => {
+    element.hidden = installed;
+  });
+  $$("[data-show-when-installed]").forEach((element) => {
+    element.hidden = !installed;
+  });
+  $$("[data-requires-installed]").forEach((element) => {
+    element.disabled = !installed || taskIsActive();
+  });
+  $$("[data-requires-exe]").forEach((element) => {
+    element.disabled = !executableReady || taskIsActive();
+  });
+  $$("[data-requires-saves]").forEach((element) => {
+    element.disabled = !savesReady || taskIsActive();
+  });
+
+  const installButtons = $$("[data-action='install']");
+  installButtons.forEach((button) => {
+    button.disabled = taskIsActive() && !button.hidden;
+  });
+
+  const help = $("#installModeHelp");
+  if (help) {
+    help.textContent = installed
+      ? "Server files are detected. Use Update Installed Server for normal patches. Advanced repair validates files and asks for extra confirmation before it runs."
+      : "Run the initial install first. After files are detected, this page switches to update-first controls and hides repair behind extra confirmation.";
+  }
+
+  if (!executableReady && installed) {
+    $("#actionHint").textContent = "Files were found, but the server executable was not detected.";
+  } else if (!installed) {
+    $("#actionHint").textContent = "Install the dedicated server before starting or updating it.";
+  } else {
+    renderReleaseNotes();
+  }
+}
+
+function renderConsoleControls(status) {
+  const task = status?.task;
+  const canSend = Boolean(task?.canReceiveInput);
+  const active = ["running", "stopping"].includes(task?.status);
+  $$("[data-console-form]").forEach((form) => {
+    form.querySelectorAll("input, button").forEach((element) => {
+      if (element.matches("[data-stop-task]")) {
+        element.disabled = !active;
+      } else {
+        element.disabled = !canSend;
+      }
+    });
+  });
+  $$("[data-console-state]").forEach((element) => {
+    element.textContent = active
+      ? `${task.name} is ${task.status}; console input ${canSend ? "ready" : "not available"}`
+      : "No running console task";
+  });
+}
+
 function readProfileFromForm() {
   const form = $("#settingsForm");
   const next = structuredClone(state.profile);
@@ -399,7 +538,11 @@ async function saveSettings() {
   state.profile = payload.profile;
   state.status = payload.status;
   renderAll();
-  toast("Settings saved. DedicatedServer.ini was updated using the current mappings.");
+  toast(
+    payload.status.paths.config.exists
+      ? "Settings saved. DedicatedServer.ini was updated using the current mappings."
+      : "Settings saved. DedicatedServer.ini will be updated after the server creates it."
+  );
 }
 
 async function runAction(action) {
@@ -413,6 +556,30 @@ async function runAction(action) {
   };
   const [path, message] = map[action] || [];
   if (!path) return;
+
+  if (taskIsActive()) {
+    toast("A task is already running. Watch it in the live console or stop it before starting another.");
+    return;
+  }
+  if (["update"].includes(action) && !isServerInstalled()) {
+    toast("Install the Dragonwilds dedicated server before running updates.");
+    return;
+  }
+  if (["start", "restart"].includes(action) && !hasServerExecutable()) {
+    toast("The server executable was not detected. Run the initial install first.");
+    return;
+  }
+  if (action === "backup" && !hasSaveFolder()) {
+    toast("The save folder does not exist yet. Start the server once before creating backups.");
+    return;
+  }
+  if (action === "install" && isServerInstalled()) {
+    const first = confirm("Server files are already installed. Run repair/validate instead of a normal update?");
+    if (!first) return;
+    const second = confirm("Repair can take longer because SteamCMD validates the install. Are you sure you want to continue?");
+    if (!second) return;
+  }
+
   const payload = await api(path, { method: "POST", body: "{}" });
   toast(message);
   if (payload.task) state.status.task = payload.task;
@@ -423,6 +590,39 @@ async function restoreBackup(id) {
   await api(`/api/backups/${id}/restore`, { method: "POST", body: "{}" });
   toast("Restore task started. The current save folder will be moved to a safety copy first.");
   await refreshStatus();
+}
+
+async function sendConsoleInput(input) {
+  const payload = await api("/api/tasks/active/input", {
+    method: "POST",
+    body: JSON.stringify({ input })
+  });
+  if (payload.task) state.status.task = payload.task;
+  renderStatus();
+  renderLogs();
+}
+
+async function stopConsoleTask() {
+  const payload = await api("/api/tasks/active/stop", {
+    method: "POST",
+    body: "{}"
+  });
+  if (payload.task) state.status.task = payload.task;
+  toast("Stop requested for the running task.");
+  renderStatus();
+  renderLogs();
+}
+
+async function manualHealthCheck(button) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Checking...";
+  try {
+    await refreshStatus({ toastOnSuccess: true });
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
 }
 
 function escapeHtml(value) {
@@ -456,6 +656,27 @@ function wireEvents() {
       }
     }
 
+    const quitButton = event.target.closest("[data-console-send]");
+    if (quitButton) {
+      try {
+        await sendConsoleInput(quitButton.dataset.consoleSend);
+      } catch (error) {
+        toast(error.message);
+      }
+    }
+
+    const stopTaskButton = event.target.closest("[data-stop-task]");
+    if (stopTaskButton) {
+      try {
+        stopTaskButton.disabled = true;
+        await stopConsoleTask();
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        stopTaskButton.disabled = false;
+      }
+    }
+
     const restoreButton = event.target.closest("[data-restore]");
     if (restoreButton) {
       const backupId = restoreButton.dataset.restore;
@@ -472,11 +693,24 @@ function wireEvents() {
     }
   });
 
+  document.body.addEventListener("submit", async (event) => {
+    const form = event.target.closest("[data-console-form]");
+    if (!form) return;
+    event.preventDefault();
+    const input = form.elements.command.value;
+    try {
+      await sendConsoleInput(input);
+      form.reset();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
   $("#saveSettingsTop").addEventListener("click", saveSettings);
   $("#saveSettingsDetail").addEventListener("click", saveSettings);
-  $("#runFullCheck").addEventListener("click", refreshStatus);
-  $("#refreshNow").addEventListener("click", refreshStatus);
-  $("#refreshLogs").addEventListener("click", refreshStatus);
+  $("#runFullCheck").addEventListener("click", (event) => manualHealthCheck(event.currentTarget));
+  $("#refreshNow").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
+  $("#refreshLogs").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
   $("#checkAppUpdate").addEventListener("click", async () => {
     try {
       const payload = await api("/api/updates/check", { method: "POST", body: "{}" });
@@ -505,10 +739,6 @@ function wireEvents() {
 }
 
 wireEvents();
-loadApp()
-  .then(() => {
-    state.refreshTimer = setInterval(refreshStatus, 5000);
-  })
-  .catch((error) => {
-    toast(error.message);
-  });
+loadApp().catch((error) => {
+  toast(error.message);
+});
