@@ -82,8 +82,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.11") {
-    throw new Error(`Expected version 0.5.11, got ${app.version}`);
+  if (app.version !== "0.5.12") {
+    throw new Error(`Expected version 0.5.12, got ${app.version}`);
   }
 
   const processDetectionProfile = {
@@ -394,6 +394,22 @@ async function main() {
     throw new Error(`Status did not detect RSDragonwildsServer.exe: ${status.paths.serverExe.path}`);
   }
 
+  const savedBackupSettings = await requestJson("/api/backups/settings", "PUT", {
+    retentionCount: 3,
+    scheduleEnabled: true,
+    scheduleTime: "23:59"
+  });
+  if (savedBackupSettings.profile.backups.retentionCount !== 3 || savedBackupSettings.status.backupRetentionCount !== 3) {
+    throw new Error("Backup retention setting did not save with scheduled maintenance settings.");
+  }
+  if (
+    !savedBackupSettings.status.backupSchedule?.enabled ||
+    savedBackupSettings.status.backupSchedule.time !== "23:59" ||
+    !savedBackupSettings.status.backupSchedule.nextRunAt
+  ) {
+    throw new Error(`Daily backup/update schedule did not save correctly: ${JSON.stringify(savedBackupSettings.status.backupSchedule)}`);
+  }
+
   const page = await new Promise((resolve, reject) => {
     http.get(`http://127.0.0.1:${port}/`, (response) => {
       const chunks = [];
@@ -424,6 +440,21 @@ async function main() {
   }
   if (!page.includes('id="openIniFile"') || !page.includes("Open File")) {
     throw new Error("Dashboard HTML is missing the DedicatedServer.ini Open File action.");
+  }
+  if (
+    !page.includes('id="backupScheduleEnabled"') ||
+    !page.includes('id="backupScheduleTime"') ||
+    !page.includes('id="backupScheduleStatus"') ||
+    !page.includes("Daily backup + update")
+  ) {
+    throw new Error("Backups page is missing daily backup/update schedule controls.");
+  }
+  if (
+    !serverSource.includes("runScheduledBackupUpdateWorkflow") ||
+    !serverSource.includes("startBackupScheduleTimer") ||
+    !serverSource.includes("runUpdateServerWorkflow(await getProfile()")
+  ) {
+    throw new Error("Server is missing the scheduled backup/update workflow wiring.");
   }
   if (
     !page.includes('id="localJoinAddress"') ||

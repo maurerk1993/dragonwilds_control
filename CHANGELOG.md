@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.12 - Daily backup and update schedule
+
+- Added a daily backup/update schedule to the Backups page with enable, time-of-day, next run, and last run status.
+- Scheduled maintenance creates a backup, applies the existing backup retention purge rule, then runs the normal no-validate server update workflow.
+- The scheduled update uses the existing stop-update-restart behavior so a running server is refreshed after the update completes.
+
 ## 0.5.11 - Join address copy shortcuts
 
 - Added Local Join and Internet Join addresses to the bottom-left footer, including the effective Dragonwilds launch port.

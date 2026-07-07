@@ -1,19 +1,19 @@
 {
-  "version": "0.5.11",
-  "title": "Join address copy shortcuts",
+  "version": "0.5.12",
+  "title": "Daily backup and update schedule",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Local Join in the footer",
-      "body": "The bottom-left footer now shows the LAN address with the effective Dragonwilds launch port."
+      "heading": "Daily maintenance",
+      "body": "The Backups page can now schedule one daily backup followed by the normal no-validate server update workflow."
     },
     {
-      "heading": "Internet Join in the footer",
-      "body": "The app also resolves and shows the public server address with the same dedicated server port."
+      "heading": "Retention still applies",
+      "body": "Scheduled backups use the same backup retention setting, so old backups are pruned just like manual backups."
     },
     {
-      "heading": "Copy shortcuts",
-      "body": "Each join address has a copy button so players can quickly copy the Local Join or Internet Join value."
+      "heading": "Restart after updates",
+      "body": "If Dragonwilds was running before the scheduled update, the app restarts it after SteamCMD finishes."
     }
   ]
 }

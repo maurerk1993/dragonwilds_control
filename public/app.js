@@ -387,6 +387,42 @@ function renderBackups() {
   if (retentionInput && document.activeElement !== retentionInput) {
     retentionInput.value = String(state.profile?.backups?.retentionCount || state.status?.backupRetentionCount || 10);
   }
+  renderBackupSchedule();
+}
+
+function formatScheduleDateTime(value) {
+  if (!value) return "Not scheduled";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not scheduled";
+  return date.toLocaleString();
+}
+
+function renderBackupSchedule() {
+  const schedule = state.status?.backupSchedule || state.profile?.backups?.schedule || {};
+  const enabledInput = $("#backupScheduleEnabled");
+  const timeInput = $("#backupScheduleTime");
+  const status = $("#backupScheduleStatus");
+
+  if (enabledInput && document.activeElement !== enabledInput) {
+    enabledInput.checked = Boolean(schedule.enabled);
+  }
+  if (timeInput && document.activeElement !== timeInput) {
+    timeInput.value = schedule.time || "03:00";
+  }
+  if (!status) return;
+
+  if (!schedule.enabled) {
+    status.innerHTML = `<span><strong>Daily maintenance is off.</strong> Enable it to back up, update, and restart once per day.</span>`;
+    return;
+  }
+
+  const lastRun = schedule.lastRunStartedAt
+    ? `${escapeHtml(schedule.lastRunStatus || "unknown")} at ${escapeHtml(formatScheduleDateTime(schedule.lastRunStartedAt))}`
+    : "No scheduled run yet";
+  status.innerHTML = [
+    `<span><strong>Next run:</strong> ${escapeHtml(formatScheduleDateTime(schedule.nextRunAt))}</span>`,
+    `<span><strong>Last run:</strong> ${lastRun}${schedule.lastRunMessage ? ` - ${escapeHtml(schedule.lastRunMessage)}` : ""}</span>`
+  ].join("");
 }
 
 function renderBackupItems(backups, options = {}) {
@@ -778,17 +814,26 @@ async function saveSettings() {
 async function saveBackupSettings() {
   const input = $("#backupRetentionCount");
   const retentionCount = Number(input?.value || 10);
+  const scheduleEnabled = Boolean($("#backupScheduleEnabled")?.checked);
+  const scheduleTime = $("#backupScheduleTime")?.value || "03:00";
   if (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 999) {
     throw new Error("Keep last backups must be a whole number from 1 to 999.");
   }
+  if (scheduleEnabled && !/^([01]\d|2[0-3]):[0-5]\d$/.test(scheduleTime)) {
+    throw new Error("Daily maintenance time must be a valid 24-hour time.");
+  }
   const payload = await api("/api/backups/settings", {
     method: "PUT",
-    body: JSON.stringify({ retentionCount })
+    body: JSON.stringify({ retentionCount, scheduleEnabled, scheduleTime })
   });
   state.profile = payload.profile;
   state.status = payload.status;
   renderAll();
-  toast(`Backup retention saved. Keeping last ${retentionCount} backups.`);
+  toast(
+    scheduleEnabled
+      ? `Backup settings saved. Daily maintenance runs at ${scheduleTime}.`
+      : `Backup retention saved. Keeping last ${retentionCount} backups.`
+  );
 }
 
 async function runAction(action) {

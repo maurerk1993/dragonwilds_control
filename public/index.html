@@ -98,7 +98,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.5.11</strong>
+            <strong id="appVersion">0.5.12</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -361,13 +361,24 @@
               <button class="primary-button" data-action="backup" data-requires-saves>Backup Now</button>
             </div>
             <form class="backup-settings" id="backupSettingsForm">
-              <label>
-                <span>Keep last</span>
-                <input id="backupRetentionCount" name="retentionCount" type="number" min="1" max="999" step="1">
-                <span>backups</span>
-              </label>
+              <div class="backup-setting-fields">
+                <label>
+                  <span>Keep last</span>
+                  <input id="backupRetentionCount" name="retentionCount" type="number" min="1" max="999" step="1">
+                  <span>backups</span>
+                </label>
+                <label class="schedule-toggle">
+                  <input id="backupScheduleEnabled" name="scheduleEnabled" type="checkbox">
+                  <span>Daily backup + update</span>
+                </label>
+                <label>
+                  <span>At</span>
+                  <input id="backupScheduleTime" name="scheduleTime" type="time" step="60">
+                </label>
+              </div>
               <button class="ghost-button" type="submit">Save</button>
             </form>
+            <div class="backup-schedule-status" id="backupScheduleStatus"></div>
             <div class="backup-table" id="allBackups"></div>
           </section>
         </div>

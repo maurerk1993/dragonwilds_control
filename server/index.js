@@ -34,6 +34,8 @@ let publicIpCache = {
   error: null,
   promise: null
 };
+let backupScheduleTimer = null;
+let backupScheduleCheckInFlight = false;
 let lastIniPatchError = null;
 let lastActivityLogPruneAt = 0;
 
@@ -55,6 +57,7 @@ const logRetentionMs = logRetentionHours * 60 * 60 * 1000;
 const activityLogPruneIntervalMs = 5 * 60 * 1000;
 const publicIpRefreshMs = 10 * 60 * 1000;
 const publicIpLookupTimeoutMs = 1800;
+const backupScheduleCheckIntervalMs = 30 * 1000;
 const gracefulStopTimeoutSeconds = 30;
 const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
 const defaultGamePort = 7777;
@@ -81,7 +84,16 @@ const defaultProfile = {
     backupDir: "C:\\GameServers\\RSDragonwildsDedicatedServer\\Backups"
   },
   backups: {
-    retentionCount: 10
+    retentionCount: 10,
+    schedule: {
+      enabled: false,
+      time: "03:00",
+      nextRunAt: null,
+      lastRunStartedAt: null,
+      lastRunCompletedAt: null,
+      lastRunStatus: null,
+      lastRunMessage: null
+    }
   },
   server: {
     ownerId: "",
@@ -162,6 +174,42 @@ function normalizeGamePort(value) {
   return port;
 }
 
+function isValidDailyTime(value) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ""));
+}
+
+function normalizeDailyTime(value) {
+  return isValidDailyTime(value) ? String(value) : defaultProfile.backups.schedule.time;
+}
+
+function getNextDailyRunAt(time, fromDate = new Date()) {
+  const [hours, minutes] = normalizeDailyTime(time).split(":").map((part) => Number(part));
+  const next = new Date(fromDate);
+  next.setHours(hours, minutes, 0, 0);
+  if (next <= fromDate) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.toISOString();
+}
+
+function normalizeBackupSchedule(schedule) {
+  const merged = {
+    ...defaultProfile.backups.schedule,
+    ...(schedule || {})
+  };
+  const time = normalizeDailyTime(merged.time);
+  return {
+    ...merged,
+    enabled: Boolean(merged.enabled),
+    time,
+    nextRunAt: merged.enabled && merged.nextRunAt ? merged.nextRunAt : null,
+    lastRunStartedAt: merged.lastRunStartedAt || null,
+    lastRunCompletedAt: merged.lastRunCompletedAt || null,
+    lastRunStatus: merged.lastRunStatus || null,
+    lastRunMessage: merged.lastRunMessage || null
+  };
+}
+
 async function ensureDataDir() {
   await fsp.mkdir(dataDir, { recursive: true });
 }
@@ -196,6 +244,7 @@ function normalizeProfile(profile) {
     ...(next.backups || {}),
     retentionCount: Number.isInteger(retentionCount) && retentionCount > 0 ? Math.min(retentionCount, 999) : defaultProfile.backups.retentionCount
   };
+  next.backups.schedule = normalizeBackupSchedule(next.backups.schedule);
   next.iniMappings = { ...defaultProfile.iniMappings };
   next.customIniValues = Array.isArray(next.customIniValues) ? next.customIniValues : [];
   return next;
@@ -330,13 +379,44 @@ async function saveBackupSettings(settings) {
   if (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 999) {
     throw new Error("Keep last backups must be a whole number from 1 to 999.");
   }
+
+  const currentSchedule = normalizeBackupSchedule(profile.backups?.schedule);
+  const scheduleEnabled =
+    settings?.scheduleEnabled === undefined ? currentSchedule.enabled : Boolean(settings.scheduleEnabled);
+  const scheduleTime =
+    settings?.scheduleTime === undefined ? currentSchedule.time : String(settings.scheduleTime || "").trim();
+  if (scheduleEnabled && !isValidDailyTime(scheduleTime)) {
+    throw new Error("Daily maintenance time must be a valid 24-hour time like 03:30.");
+  }
+  const normalizedTime = normalizeDailyTime(scheduleTime);
+  const scheduleChanged =
+    scheduleEnabled !== currentSchedule.enabled ||
+    normalizedTime !== currentSchedule.time ||
+    (scheduleEnabled && !currentSchedule.nextRunAt);
+
   profile.backups = {
     ...(profile.backups || {}),
-    retentionCount
+    retentionCount,
+    schedule: {
+      ...currentSchedule,
+      enabled: scheduleEnabled,
+      time: normalizedTime,
+      nextRunAt: scheduleEnabled
+        ? scheduleChanged
+          ? getNextDailyRunAt(normalizedTime)
+          : currentSchedule.nextRunAt
+        : null,
+      lastRunStatus: scheduleEnabled ? currentSchedule.lastRunStatus : null,
+      lastRunMessage: scheduleEnabled ? currentSchedule.lastRunMessage : null
+    }
   };
   await writeJson(profilePath, profile);
   await pruneBackups(profile);
-  appendActivity(`Backup retention changed to keep last ${retentionCount}.`);
+  appendActivity(
+    scheduleEnabled
+      ? `Backup retention changed to keep last ${retentionCount}. Daily backup/update scheduled at ${normalizedTime}.`
+      : `Backup retention changed to keep last ${retentionCount}. Daily backup/update schedule disabled.`
+  );
   return profile;
 }
 
@@ -1481,7 +1561,8 @@ async function runInstall(profile, validate, options = {}) {
   });
 }
 
-async function runUpdateServerWorkflow(profile) {
+async function runUpdateServerWorkflow(profile, options = {}) {
+  const { onComplete } = options;
   fs.mkdirSync(dataDir, { recursive: true });
   const restartMarkerPath = path.join(dataDir, `${Date.now()}-update-server-restart-state.txt`);
   appendActivity("Update workflow started. Dragonwilds will be stopped before SteamCMD updates the server files.");
@@ -1492,6 +1573,12 @@ async function runUpdateServerWorkflow(profile) {
       if (exitCode !== 0) {
         removeQuietly(restartMarkerPath);
         appendActivity("Update server skipped because Dragonwilds could not be stopped cleanly.");
+        if (typeof onComplete === "function") {
+          await onComplete({
+            status: "failed",
+            message: "Dragonwilds could not be stopped cleanly before update."
+          });
+        }
         return;
       }
 
@@ -1509,24 +1596,54 @@ async function runUpdateServerWorkflow(profile) {
             removeQuietly(restartMarkerPath);
             if (updateExitCode !== 0) {
               appendActivity(`Server restart skipped because SteamCMD update failed (exit ${updateExitCode}).`);
+              if (typeof onComplete === "function") {
+                await onComplete({
+                  status: "failed",
+                  message: `SteamCMD update failed with exit code ${updateExitCode}.`
+                });
+              }
               return;
             }
             if (!shouldRestart) {
               appendActivity("Update complete. Dragonwilds was offline before update, so it was left offline.");
+              if (typeof onComplete === "function") {
+                await onComplete({
+                  status: "completed",
+                  message: "Backup and update completed. Dragonwilds was offline before update, so it was left offline."
+                });
+              }
               return;
             }
 
             try {
               await startGameServer(await getProfile());
               appendActivity("Update complete. Dragonwilds server restarted.");
+              if (typeof onComplete === "function") {
+                await onComplete({
+                  status: "completed",
+                  message: "Backup, update, and restart completed."
+                });
+              }
             } catch (error) {
               appendActivity(`Update complete, but the server could not be restarted: ${error.message}`);
+              if (typeof onComplete === "function") {
+                await onComplete({
+                  status: "failed",
+                  message: `Update completed, but restart failed: ${error.message}`
+                });
+              }
             }
           }
         });
       } catch (error) {
         removeQuietly(restartMarkerPath);
         appendActivity(`Update server did not start after stopping Dragonwilds: ${error.message}`);
+        if (typeof onComplete === "function") {
+          await onComplete({
+            status: "failed",
+            message: `Update server did not start after stopping Dragonwilds: ${error.message}`
+          });
+        }
       }
     }
   });
@@ -1732,7 +1849,11 @@ async function pruneBackups(profile) {
   return remove;
 }
 
-async function createBackup(profile) {
+async function createBackup(profile, options = {}) {
+  const {
+    name = "Create save backup",
+    onComplete
+  } = options;
   if (!exists(profile.paths.saveDir)) {
     throw new Error(`Save folder not found: ${profile.paths.saveDir}`);
   }
@@ -1746,13 +1867,126 @@ async function createBackup(profile) {
     `New-Item -ItemType Directory -Force -Path ${psString(profile.paths.backupDir)} | Out-Null`,
     `Compress-Archive -LiteralPath ${psString(profile.paths.saveDir)} -DestinationPath ${psString(outPath)} -Force`
   ].join("; ");
-  return powershellTask("Create save backup", script, {
+  return powershellTask(name, script, {
     onComplete: async ({ exitCode }) => {
       if (exitCode === 0) {
         await pruneBackups(await getProfile());
       }
+      if (typeof onComplete === "function") {
+        await onComplete({ exitCode });
+      }
     }
   });
+}
+
+async function updateBackupScheduleState(updates) {
+  const profile = normalizeProfile(await getProfile());
+  profile.backups.schedule = normalizeBackupSchedule({
+    ...profile.backups.schedule,
+    ...updates
+  });
+  await writeJson(profilePath, profile);
+  return profile.backups.schedule;
+}
+
+async function finishScheduledBackupUpdate(status, message) {
+  await updateBackupScheduleState({
+    lastRunCompletedAt: timestamp(),
+    lastRunStatus: status,
+    lastRunMessage: message
+  });
+  appendActivity(`Scheduled daily backup/update ${status}: ${message}`);
+}
+
+async function runScheduledBackupUpdateWorkflow(profile) {
+  const schedule = normalizeBackupSchedule(profile.backups?.schedule);
+  await updateBackupScheduleState({
+    nextRunAt: getNextDailyRunAt(schedule.time),
+    lastRunStartedAt: timestamp(),
+    lastRunCompletedAt: null,
+    lastRunStatus: "running",
+    lastRunMessage: "Scheduled daily backup/update started."
+  });
+  appendActivity("Scheduled daily backup/update started. Backup will run before the no-validate server update workflow.");
+
+  return createBackup(profile, {
+    name: "Scheduled daily backup",
+    onComplete: async ({ exitCode }) => {
+      if (exitCode !== 0) {
+        await finishScheduledBackupUpdate("failed", `Backup failed with exit code ${exitCode}. Update was skipped.`);
+        return;
+      }
+
+      appendActivity("Scheduled daily backup completed. Starting no-validate update workflow.");
+      try {
+        await runUpdateServerWorkflow(await getProfile(), {
+          onComplete: async ({ status, message }) => {
+            await finishScheduledBackupUpdate(status, message);
+          }
+        });
+      } catch (error) {
+        await finishScheduledBackupUpdate("failed", `Update workflow could not be started: ${error.message}`);
+      }
+    }
+  });
+}
+
+async function checkBackupSchedule() {
+  if (backupScheduleCheckInFlight) return;
+  backupScheduleCheckInFlight = true;
+  try {
+    const profile = await getProfile();
+    const schedule = normalizeBackupSchedule(profile.backups?.schedule);
+    if (!schedule.enabled) return;
+
+    if (!schedule.nextRunAt) {
+      await updateBackupScheduleState({ nextRunAt: getNextDailyRunAt(schedule.time) });
+      return;
+    }
+
+    const dueAt = Date.parse(schedule.nextRunAt);
+    if (!Number.isFinite(dueAt)) {
+      await updateBackupScheduleState({ nextRunAt: getNextDailyRunAt(schedule.time) });
+      return;
+    }
+    if (Date.now() < dueAt) return;
+
+    if (activeTask && ["running", "stopping"].includes(activeTask.status)) {
+      return;
+    }
+
+    if (!exists(profile.paths.saveDir)) {
+      await updateBackupScheduleState({
+        nextRunAt: getNextDailyRunAt(schedule.time),
+        lastRunStartedAt: timestamp(),
+        lastRunCompletedAt: timestamp(),
+        lastRunStatus: "failed",
+        lastRunMessage: `Save folder not found: ${profile.paths.saveDir}`
+      });
+      appendActivity(`Scheduled daily backup/update skipped because save folder was not found: ${profile.paths.saveDir}`);
+      return;
+    }
+
+    await runScheduledBackupUpdateWorkflow(profile);
+  } catch (error) {
+    appendActivity(`Scheduled daily backup/update check failed: ${error.message}`);
+  } finally {
+    backupScheduleCheckInFlight = false;
+  }
+}
+
+function startBackupScheduleTimer() {
+  if (backupScheduleTimer) return;
+  backupScheduleTimer = setInterval(() => {
+    checkBackupSchedule().catch((error) => appendActivity(`Scheduled daily backup/update timer failed: ${error.message}`));
+  }, backupScheduleCheckIntervalMs);
+  checkBackupSchedule().catch((error) => appendActivity(`Scheduled daily backup/update startup check failed: ${error.message}`));
+}
+
+function stopBackupScheduleTimer() {
+  if (!backupScheduleTimer) return;
+  clearInterval(backupScheduleTimer);
+  backupScheduleTimer = null;
 }
 
 async function restoreBackup(profile, backupId) {
@@ -1832,6 +2066,7 @@ async function getStatus() {
     tcpPortOpen,
     logRetentionHours,
     backupRetentionCount: profile.backups?.retentionCount || defaultProfile.backups.retentionCount,
+    backupSchedule: normalizeBackupSchedule(profile.backups?.schedule),
     configuration: {
       ...configuration,
       iniReady: configuration.ready && configExists,
@@ -2111,6 +2346,7 @@ async function startControlServer() {
       console.log(`Dragonwilds Server Control ${appPackage.version}`);
       console.log(`Listening on ${targetUrl}`);
       console.log(`Data directory: ${dataDir}`);
+      startBackupScheduleTimer();
       openBrowser(targetUrl);
       resolve({ server: controlServer, url: targetUrl });
     });
@@ -2129,6 +2365,7 @@ function stopControlServer() {
         return;
       }
       controlServer = null;
+      stopBackupScheduleTimer();
       resolve();
     });
   });
