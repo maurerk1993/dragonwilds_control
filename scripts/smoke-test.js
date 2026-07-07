@@ -80,8 +80,16 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.3") {
-    throw new Error(`Expected version 0.5.3, got ${app.version}`);
+  if (app.version !== "0.5.4") {
+    throw new Error(`Expected version 0.5.4, got ${app.version}`);
+  }
+
+  const serverSource = await fs.readFile(path.join(root, "server", "index.js"), "utf8");
+  if (serverSource.includes("startCommand") || serverSource.includes("/wait cmd.exe")) {
+    throw new Error("External task launcher should not use the hidden start/wait wrapper.");
+  }
+  if (!serverSource.includes("detached: true") || !serverSource.includes("windowsHide: false")) {
+    throw new Error("External task launcher should directly spawn a detached visible cmd.exe window.");
   }
 
   const profile = await requestJson("/api/settings");

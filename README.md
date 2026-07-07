@@ -88,7 +88,7 @@ The external command window is the primary place to watch live install/update/re
 
 Long-running tasks open a visible Windows command window for their live stdout/stderr. If SteamCMD or PowerShell needs direct attention, use the external command window; the in-app Console remains useful for task status, retained control activity, and game log history.
 
-On Windows, install, update, repair, backup, restore, and stop tasks launch in a real external `cmd.exe` window. The window pauses when the task finishes so you can read the final SteamCMD or PowerShell result before closing it. While that window is open, use it for live output and any command input.
+On Windows, install, update, repair, backup, restore, and stop tasks launch as a detached visible `cmd.exe` window. The window pauses when the task finishes so you can read the final SteamCMD or PowerShell result before closing it. While that window is open, use it for live output and any command input. The Console tab records the exact command and temporary script path for troubleshooting.
 
 The control app prunes its own activity log to the most recent 72 hours. Game server log files are read through the same recent-log view but are not deleted by the app.
 

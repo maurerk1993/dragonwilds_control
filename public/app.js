@@ -399,6 +399,7 @@ function renderConsoleSummary(status = state.status) {
     summary.innerHTML = [
       statCard("Task", active ? `${task.name} (${task.status})` : "No running task"),
       statCard("Window", task?.externalWindow ? "External command window opened" : "None active"),
+      task?.scriptPath ? statCard("Script", task.scriptPath) : "",
       statCard("Retained", `${status?.logRetentionHours || 72} hours`),
       statCard("Lines", String(buildConsoleLines(status).length))
     ].join("");
@@ -410,6 +411,7 @@ function renderConsoleSummary(status = state.status) {
       statCard("Task", active ? `${task.name} (${task.status})` : "No running task"),
       statCard("Console Input", task?.canReceiveInput ? "Ready" : "Not available"),
       statCard("Window", task?.externalWindow ? "External command window opened" : "None active"),
+      task?.windowCommand ? statCard("Command", task.windowCommand) : "",
       statCard("Retention", `${status?.logRetentionHours || 72} hours`)
     ].join("");
   }

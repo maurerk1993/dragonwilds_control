@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4 - Force visible CMD launch
+
+- Replaced the hidden `cmd /c start /wait` launcher with a direct detached `cmd.exe` task process using `windowsHide: false`.
+- Added the launched command and temporary script path to task status output so failed external-window launches are diagnosable.
+- Kept the external task window pause so admins can read the final SteamCMD or PowerShell result before closing it.
+
 ## 0.5.3 - Wait for install completion
 
 - Changed install detection so SteamCMD manifests or partial payload files no longer count as a complete dedicated server install.

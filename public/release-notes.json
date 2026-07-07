@@ -1,19 +1,19 @@
 {
-  "version": "0.5.3",
-  "title": "Wait for install completion",
+  "version": "0.5.4",
+  "title": "Force visible CMD launch",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Setup waits for the executable",
-      "body": "The app no longer treats SteamCMD's early manifest or partial files as a complete install. Setup unlocks only after the Dragonwilds server executable is detected."
+      "heading": "CMD launches directly",
+      "body": "Install and update tasks now spawn a detached visible cmd.exe window directly instead of relying on a hidden start/wait wrapper."
     },
     {
-      "heading": "No early INI warnings",
-      "body": "DedicatedServer.ini is no longer checked or patched while install/update is still running or before the server payload is ready."
+      "heading": "Better troubleshooting details",
+      "body": "The Console tab now records the exact command and temporary script path used for external task windows."
     },
     {
-      "heading": "Clearer partial install state",
-      "body": "When SteamCMD has started writing files but the install is not ready yet, the dashboard now shows an installing/incomplete state instead of asking for setup values."
+      "heading": "Still pauses at the end",
+      "body": "The external task window still pauses at the end so you can read SteamCMD's final output before it closes."
     }
   ]
 }

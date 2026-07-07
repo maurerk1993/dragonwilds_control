@@ -679,6 +679,8 @@ function taskSnapshot() {
     finishedAt: activeTask.finishedAt,
     exitCode: activeTask.exitCode,
     externalWindow: Boolean(activeTask.externalWindow),
+    windowCommand: activeTask.windowCommand,
+    scriptPath: activeTask.scriptPath,
     canReceiveInput:
       activeTask.acceptsInput &&
       ["running", "stopping"].includes(activeTask.status) &&
@@ -758,7 +760,9 @@ function beginTask(name, command, args, options = {}) {
     outputBuffer: "",
     child: null,
     acceptsInput: options.acceptsInput !== false,
-    externalWindow: Boolean(options.externalWindow)
+    externalWindow: Boolean(options.externalWindow),
+    windowCommand: options.windowCommand || null,
+    scriptPath: options.scriptPath || null
   };
   activeTask = task;
   appendActivity(`Task started: ${name}${task.externalWindow ? " (external command window opened)" : ""}`);
@@ -772,6 +776,8 @@ function beginTask(name, command, args, options = {}) {
     cleanupPaths,
     externalWindow,
     initialOutput,
+    scriptPath,
+    windowCommand,
     windowsHide,
     ...spawnOptions
   } = options;
@@ -890,17 +896,23 @@ function windowsExternalPowerShellTask(name, script) {
   fs.writeFileSync(ps1Path, ps1, "utf8");
   fs.writeFileSync(cmdPath, cmd, "utf8");
 
-  const startCommand = `start "${title}" /wait cmd.exe /d /s /c "${cmdPath}"`;
-  return beginTask(name, "cmd.exe", ["/d", "/s", "/c", startCommand], {
+  const commandArgs = ["/d", "/s", "/c", cmdPath];
+  return beginTask(name, "cmd.exe", commandArgs, {
     acceptsInput: false,
     cleanupPaths: [ps1Path, cmdPath],
+    detached: true,
     externalWindow: true,
     initialOutput: [
       `Opened a separate command window for ${name}.`,
+      `Command: cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
+      `Script: ${cmdPath}`,
       "Watch the external command window for live SteamCMD/PowerShell output and prompts.",
       "The app will mark this task finished after that window is closed or you press a key at the end."
     ],
-    windowsHide: true
+    scriptPath: cmdPath,
+    stdio: "ignore",
+    windowCommand: `cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
+    windowsHide: false
   });
 }
 
