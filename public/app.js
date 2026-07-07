@@ -203,6 +203,7 @@ function renderStatus() {
   footerDot.classList.toggle("online", status.serverRunning);
   footerDot.classList.toggle("offline", !status.serverRunning);
   setText("footerStatusText", status.serverRunning ? "Server process is running" : "Server process is stopped");
+  renderJoinAddresses(status);
 
   const taskNotice = $("#taskNotice");
   if (status.task && status.task.status === "running") {
@@ -220,6 +221,26 @@ function renderStatus() {
   renderSetupGate(status);
   renderIniFile(status);
   renderConsoleControls(status);
+}
+
+function renderJoinAddress(kind, join) {
+  const valueElement = $(`#${kind}JoinAddress`);
+  const button = $(`#copy${kind[0].toUpperCase()}${kind.slice(1)}Join`);
+  if (!valueElement || !button) return;
+
+  const value = join?.value || "";
+  const checking = kind === "public" && ["checking", "refreshing"].includes(join?.status);
+  const fallbackText = checking ? "Checking..." : "Unavailable";
+  valueElement.textContent = value || fallbackText;
+  valueElement.title = value || join?.error || fallbackText;
+  button.dataset.copyValue = value;
+  button.disabled = !value;
+  button.title = value ? `Copy ${join?.label || "join address"}: ${value}` : join?.error || fallbackText;
+}
+
+function renderJoinAddresses(status) {
+  renderJoinAddress("local", status?.joinAddresses?.local);
+  renderJoinAddress("public", status?.joinAddresses?.public);
 }
 
 function healthValue(ok, goodText, badText) {
@@ -872,6 +893,25 @@ async function openIniFile() {
   toast(payload.file?.selectedFile ? "Opened DedicatedServer.ini." : "Opened the config folder.");
 }
 
+async function copyTextToClipboard(value) {
+  if (!value) throw new Error("No join address is available to copy yet.");
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Could not copy the join address.");
+}
+
 async function manualHealthCheck(button) {
   const originalText = button.textContent;
   button.disabled = true;
@@ -913,6 +953,18 @@ function wireEvents() {
       } finally {
         actionButton.disabled = false;
         renderStatus();
+      }
+    }
+
+    const copyJoinButton = event.target.closest("[data-copy-join]");
+    if (copyJoinButton) {
+      event.preventDefault();
+      const value = copyJoinButton.dataset.copyValue;
+      try {
+        await copyTextToClipboard(value);
+        toast(`Copied ${value}`);
+      } catch (error) {
+        toast(error.message);
       }
     }
 

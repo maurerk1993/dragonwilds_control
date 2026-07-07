@@ -82,8 +82,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.10") {
-    throw new Error(`Expected version 0.5.10, got ${app.version}`);
+  if (app.version !== "0.5.11") {
+    throw new Error(`Expected version 0.5.11, got ${app.version}`);
   }
 
   const processDetectionProfile = {
@@ -366,6 +366,15 @@ async function main() {
   if (portArgCount !== 1) {
     throw new Error(`Expected exactly one effective -port argument, got ${portArgCount}.`);
   }
+  if (!status.joinAddresses || status.joinAddresses.port !== 28888) {
+    throw new Error(`Status did not report join addresses with the effective launch port: ${JSON.stringify(status.joinAddresses)}`);
+  }
+  if (!status.joinAddresses.local?.value || !status.joinAddresses.local.value.endsWith(":28888")) {
+    throw new Error(`Status did not report a Local Join address using the effective launch port: ${JSON.stringify(status.joinAddresses.local)}`);
+  }
+  if (status.joinAddresses.public?.value && !status.joinAddresses.public.value.endsWith(":28888")) {
+    throw new Error(`Status reported a public join address without the effective launch port: ${JSON.stringify(status.joinAddresses.public)}`);
+  }
   if (!status.configuration.ready || !status.configuration.iniReady || !status.paths.config.exists) {
     throw new Error("Status did not report a ready patched DedicatedServer.ini.");
   }
@@ -415,6 +424,18 @@ async function main() {
   }
   if (!page.includes('id="openIniFile"') || !page.includes("Open File")) {
     throw new Error("Dashboard HTML is missing the DedicatedServer.ini Open File action.");
+  }
+  if (
+    !page.includes('id="localJoinAddress"') ||
+    !page.includes('id="publicJoinAddress"') ||
+    !page.includes('data-copy-join="local"') ||
+    !page.includes('data-copy-join="public"') ||
+    !page.includes("icon-copy")
+  ) {
+    throw new Error("Dashboard HTML is missing join address copy controls.");
+  }
+  if (!appSource.includes("copyTextToClipboard") || !appSource.includes("renderJoinAddresses")) {
+    throw new Error("Dashboard app script is missing join address rendering or clipboard behavior.");
   }
   if (page.includes("data-restore") || page.includes(">Restore<")) {
     throw new Error("Backup restore controls should not be rendered in the app UI.");

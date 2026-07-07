@@ -50,6 +50,9 @@
       <symbol id="icon-shield" viewBox="0 0 24 24">
         <path d="M12 2 5 5v6c0 4.5 2.8 8.5 7 10 4.2-1.5 7-5.5 7-10V5zm-1 5h2v6h-2zm0 8h2v2h-2z"></path>
       </symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24">
+        <path d="M8 7h11v14H8zM5 3h11v2H7v12H5z"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <aside class="sidebar">
@@ -95,7 +98,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.5.7</strong>
+            <strong id="appVersion">0.5.11</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -104,6 +107,22 @@
           <div class="system-ok">
             <span class="status-dot" id="footerStatusDot"></span>
             <span id="footerStatusText">Checking status</span>
+          </div>
+          <div class="join-addresses" aria-label="Server join addresses">
+            <div class="join-row">
+              <span class="join-label">Local Join</span>
+              <strong class="join-value" id="localJoinAddress">Checking...</strong>
+              <button class="copy-join" id="copyLocalJoin" type="button" data-copy-join="local" title="Copy Local Join address" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#icon-copy"></use></svg>
+              </button>
+            </div>
+            <div class="join-row">
+              <span class="join-label">Internet Join</span>
+              <strong class="join-value" id="publicJoinAddress">Checking...</strong>
+              <button class="copy-join" id="copyPublicJoin" type="button" data-copy-join="public" title="Copy Internet Join address" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#icon-copy"></use></svg>
+              </button>
+            </div>
           </div>
         </div>
       </aside>

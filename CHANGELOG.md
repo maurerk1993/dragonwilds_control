@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.11 - Join address copy shortcuts
+
+- Added Local Join and Internet Join addresses to the bottom-left footer, including the effective Dragonwilds launch port.
+- Added copy buttons for each join address so LAN and internet connection strings can be copied directly.
+- Added cached public IP detection and smoke coverage for the new join-address status payload and UI controls.
+
 ## 0.5.10 - Accurate server process detection
 
 - Fixed the app reporting the Dragonwilds dedicated server as running after reboot when only Dragonwilds Server Control was open.

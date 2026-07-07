@@ -1,6 +1,7 @@
 const fs = require("fs");
 const fsp = require("fs/promises");
 const http = require("http");
+const https = require("https");
 const net = require("net");
 const os = require("os");
 const path = require("path");
@@ -27,6 +28,12 @@ let activeTask = null;
 let serverProcess = null;
 let controlServer = null;
 let serverDetectionCache = null;
+let publicIpCache = {
+  address: null,
+  checkedAt: 0,
+  error: null,
+  promise: null
+};
 let lastIniPatchError = null;
 let lastActivityLogPruneAt = 0;
 
@@ -46,6 +53,8 @@ const serverLogSnapshotLimit = 5000;
 const logRetentionHours = 72;
 const logRetentionMs = logRetentionHours * 60 * 60 * 1000;
 const activityLogPruneIntervalMs = 5 * 60 * 1000;
+const publicIpRefreshMs = 10 * 60 * 1000;
+const publicIpLookupTimeoutMs = 1800;
 const gracefulStopTimeoutSeconds = 30;
 const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
 const defaultGamePort = 7777;
@@ -679,6 +688,27 @@ function getSecondaryPort(gamePort) {
   return assertValidGamePort(gamePort) + 1;
 }
 
+function parseLaunchPortValue(value) {
+  const parsed = parseGamePort(value);
+  return parsed !== null && parsed >= minGamePort && parsed <= maxGamePort ? parsed : null;
+}
+
+function getLaunchPortFromArgs(args, fallbackPort) {
+  for (let index = args.length - 1; index >= 0; index -= 1) {
+    const arg = String(args[index] || "");
+    const lowerArg = arg.toLowerCase();
+    if (lowerArg.startsWith("-port=")) {
+      const parsed = parseLaunchPortValue(arg.slice(arg.indexOf("=") + 1));
+      if (parsed !== null) return parsed;
+    }
+    if (lowerArg === "-port" && index + 1 < args.length) {
+      const parsed = parseLaunchPortValue(args[index + 1]);
+      if (parsed !== null) return parsed;
+    }
+  }
+  return assertValidGamePort(fallbackPort);
+}
+
 function getEffectiveLaunchArgs(profile) {
   const gamePort = assertValidGamePort(profile.server.port);
   const args = splitArgs(profile.server.launchArgs);
@@ -698,6 +728,137 @@ function getEffectiveLaunchArgs(profile) {
   }
 
   return [...filteredArgs, `-port=${gamePort}`];
+}
+
+function isPrivateIpv4(address) {
+  const parts = String(address || "").split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  return (
+    parts[0] === 10 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168)
+  );
+}
+
+function getLocalServerIp() {
+  const candidates = [];
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const item of entries || []) {
+      if (item.internal || item.family !== "IPv4" || !item.address) continue;
+      candidates.push(item.address);
+    }
+  }
+  return candidates.find(isPrivateIpv4) || candidates[0] || (host === "127.0.0.1" ? "127.0.0.1" : host);
+}
+
+function isLikelyIpAddress(value) {
+  const text = String(value || "").trim();
+  return (
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(text) ||
+    /^[0-9a-f:]+$/i.test(text)
+  );
+}
+
+function requestPublicIpAddress() {
+  return new Promise((resolve, reject) => {
+    const request = https.get("https://api.ipify.org?format=json", { timeout: publicIpLookupTimeoutMs }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`Public IP lookup returned HTTP ${response.statusCode}`));
+          return;
+        }
+        try {
+          const parsed = JSON.parse(body);
+          const ip = String(parsed.ip || "").trim();
+          if (!isLikelyIpAddress(ip)) {
+            reject(new Error("Public IP lookup returned an invalid address."));
+            return;
+          }
+          resolve(ip);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on("timeout", () => {
+      request.destroy(new Error("Public IP lookup timed out."));
+    });
+    request.on("error", reject);
+  });
+}
+
+function refreshPublicIpAddressIfNeeded() {
+  const now = Date.now();
+  const hasFreshAddress = publicIpCache.address && now - publicIpCache.checkedAt < publicIpRefreshMs;
+  const hasFreshFailure = publicIpCache.error && now - publicIpCache.checkedAt < publicIpRefreshMs && !publicIpCache.address;
+  if (publicIpCache.promise || hasFreshAddress || hasFreshFailure) return;
+
+  publicIpCache.promise = requestPublicIpAddress()
+    .then((address) => {
+      publicIpCache = {
+        address,
+        checkedAt: Date.now(),
+        error: null,
+        promise: null
+      };
+    })
+    .catch((error) => {
+      publicIpCache = {
+        address: publicIpCache.address,
+        checkedAt: Date.now(),
+        error: error.message,
+        promise: null
+      };
+    });
+}
+
+function getPublicIpSnapshot() {
+  refreshPublicIpAddressIfNeeded();
+  return {
+    address: publicIpCache.address,
+    checkedAt: publicIpCache.checkedAt ? new Date(publicIpCache.checkedAt).toISOString() : null,
+    status: publicIpCache.promise
+      ? publicIpCache.address
+        ? "refreshing"
+        : "checking"
+      : publicIpCache.address
+        ? "ready"
+        : "unavailable",
+    error: publicIpCache.error
+  };
+}
+
+function formatJoinAddress(address, portNumber) {
+  if (!address) return null;
+  const text = String(address).trim();
+  return text.includes(":") && !text.startsWith("[") ? `[${text}]:${portNumber}` : `${text}:${portNumber}`;
+}
+
+function getJoinAddresses(effectiveLaunchArgs, fallbackPort) {
+  const portNumber = getLaunchPortFromArgs(effectiveLaunchArgs, fallbackPort);
+  const localIp = getLocalServerIp();
+  const publicIp = getPublicIpSnapshot();
+  return {
+    port: portNumber,
+    local: {
+      label: "Local Join",
+      address: localIp,
+      value: formatJoinAddress(localIp, portNumber)
+    },
+    public: {
+      label: "Internet Join",
+      address: publicIp.address,
+      value: formatJoinAddress(publicIp.address, portNumber),
+      status: publicIp.status,
+      error: publicIp.error,
+      checkedAt: publicIp.checkedAt
+    }
+  };
 }
 
 function formatLaunchArgsForDisplay(args) {
@@ -1653,6 +1814,7 @@ async function getStatus() {
   const selectedPort = assertValidGamePort(profile.server.port);
   const secondaryPort = getSecondaryPort(selectedPort);
   const effectiveLaunchArgs = getEffectiveLaunchArgs(profile);
+  const joinAddresses = getJoinAddresses(effectiveLaunchArgs, selectedPort);
 
   return {
     appVersion: appPackage.version,
@@ -1666,6 +1828,7 @@ async function getStatus() {
     queryPort: secondaryPort,
     effectiveLaunchArgs,
     effectiveLaunchArgsText: formatLaunchArgsForDisplay(effectiveLaunchArgs),
+    joinAddresses,
     tcpPortOpen,
     logRetentionHours,
     backupRetentionCount: profile.backups?.retentionCount || defaultProfile.backups.retentionCount,

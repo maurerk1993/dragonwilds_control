@@ -1,19 +1,19 @@
 {
-  "version": "0.5.10",
-  "title": "Accurate server process detection",
+  "version": "0.5.11",
+  "title": "Join address copy shortcuts",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "No false online state",
-      "body": "The app no longer counts Dragonwilds Server Control itself as the dedicated server after a reboot."
+      "heading": "Local Join in the footer",
+      "body": "The bottom-left footer now shows the LAN address with the effective Dragonwilds launch port."
     },
     {
-      "heading": "Smarter process matching",
-      "body": "Known Dragonwilds server processes are still detected, while broader matches now need to come from the configured server folder."
+      "heading": "Internet Join in the footer",
+      "body": "The app also resolves and shows the public server address with the same dedicated server port."
     },
     {
-      "heading": "Regression coverage",
-      "body": "Smoke tests now cover the control-app false positive and the expected Dragonwilds server process cases."
+      "heading": "Copy shortcuts",
+      "body": "Each join address has a copy button so players can quickly copy the Local Join or Internet Join value."
     }
   ]
 }

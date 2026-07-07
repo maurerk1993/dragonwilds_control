@@ -213,6 +213,60 @@ button:disabled {
   gap: 9px;
 }
 
+.join-addresses {
+  display: grid;
+  gap: 10px;
+}
+
+.join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 3px 8px;
+  align-items: center;
+}
+
+.join-label {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.join-value {
+  min-width: 0;
+  color: var(--text);
+  font: 700 13px/1.2 Consolas, "Cascadia Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy-join {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(212, 173, 89, 0.38);
+  border-radius: 6px;
+  color: var(--brass);
+  background: rgba(212, 173, 89, 0.12);
+}
+
+.copy-join .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.copy-join:not(:disabled):hover {
+  border-color: rgba(93, 210, 116, 0.48);
+  color: var(--green-bright);
+  background: rgba(47, 143, 70, 0.18);
+}
+
 .status-dot {
   width: 11px;
   height: 11px;
