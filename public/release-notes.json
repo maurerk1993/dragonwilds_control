@@ -1,31 +1,19 @@
 {
-  "version": "0.3.1",
-  "title": "Live install console and first-run fixes",
+  "version": "0.4.0",
+  "title": "Official first-run server setup",
   "date": "2026-07-06",
   "notes": [
     {
-      "heading": "Live install console",
-      "body": "Install and update tasks now refresh quickly while they run, keep much more output, and show active SteamCMD progress in the log panel."
+      "heading": "First install now asks for required server info",
+      "body": "Before install or start, the app now prompts for your Dragonwilds Owner ID, Server Name, Default World Name, and Admin Password so the dedicated server can actually boot."
     },
     {
-      "heading": "Interactive task input",
-      "body": "You can type into a running install/update task, send quit, or stop the task from the log panel if SteamCMD gets stuck."
+      "heading": "DedicatedServer.ini is generated correctly",
+      "body": "The app writes the official WindowsServer DedicatedServer.ini section and keys for you, including the optional World Password when you choose to set one."
     },
     {
-      "heading": "Better server detection",
-      "body": "The app now looks for the dedicated server executable name used by the Steam app and shows clearer install diagnostics."
-    },
-    {
-      "heading": "Safer first-run flow",
-      "body": "A fresh install is shown only when server files are missing. After install, normal update controls are emphasized and repair asks for extra confirmation."
-    },
-    {
-      "heading": "Cleaner layout",
-      "body": "The dashboard now keeps the sidebar footer and live logs visible without forcing you to scroll the whole app window."
-    },
-    {
-      "heading": "Real button icons",
-      "body": "Action buttons and navigation now use SVG icons instead of fallback letters or C-shaped placeholders."
+      "heading": "Existing configs are detected",
+      "body": "If your server already has a DedicatedServer.ini, the app reads the official values from it so Health Check does not falsely report setup as missing."
     }
   ]
 }

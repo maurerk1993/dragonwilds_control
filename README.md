@@ -24,6 +24,16 @@ The generated setup `.exe` will be in `dist\`. Copy it to the Windows 11 server,
 
 The packaged app asks Windows for Administrator elevation when it opens. This is intentional so it can create and manage the default `C:\SteamCMD` and `C:\GameServers` paths.
 
+On first setup, enter the mandatory Dragonwilds dedicated server values before running the install/start actions:
+
+- Owner ID: your RuneScape: Dragonwilds Player ID from the in-game Settings menu
+- Server Name
+- Default World Name
+- Admin Password
+- Optional World Password
+
+The app writes those values to `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini` using the official `/Script/Dominion.DedicatedServerSettings` section.
+
 For MSI packaging:
 
 ```powershell
@@ -61,9 +71,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
 
 ## Settings
 
-The app writes a local JSON profile and can update `DedicatedServer.ini` when settings are saved. The server port is editable in the UI and defaults to `7777`.
+The app writes a local JSON profile and updates `DedicatedServer.ini` when the required official values are present. The server port is editable in the UI and defaults to `7777`.
 
-Public, authoritative Dragonwilds INI key documentation was not available during this initial build, so the app exposes editable INI mappings. If the generated server config uses different key names, update the mapping table in the Settings screen before saving.
+Dragonwilds requires the Windows dedicated server config at `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`. The app generates that file with `OwnerId`, `ServerName`, `DefaultWorldName`, `AdminPassword`, and optional `WorldPassword`. Stop the server before changing these values because Dragonwilds documentation warns that changes made while the server is running can be lost.
+
+If an existing `DedicatedServer.ini` is already present, the app reads those official values back into the profile so existing installs can be managed without retyping everything.
 
 ## Backups
 
@@ -85,4 +97,4 @@ See [docs/app-update-options.md](docs/app-update-options.md). The packaged app c
 npm test
 ```
 
-The smoke test starts the local dashboard on a test port, verifies the API, saves a test port setting, and confirms the dashboard HTML loads.
+The smoke test starts the local dashboard on a test port, verifies the API, saves a test port and required dedicated-server setup values, confirms `DedicatedServer.ini` is generated, and confirms the dashboard HTML loads.

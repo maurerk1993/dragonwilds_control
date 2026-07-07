@@ -72,6 +72,15 @@ function hasSaveFolder(status = state.status) {
   return Boolean(status?.paths?.saves?.exists);
 }
 
+function isConfigReady(status = state.status) {
+  return Boolean(status?.configuration?.ready);
+}
+
+function configMissingText(status = state.status) {
+  const missing = status?.configuration?.missingRequired || [];
+  return missing.length ? missing.join(", ") : "required setup values";
+}
+
 async function loadApp() {
   const payload = await api("/api/app");
   state.profile = payload.profile;
@@ -165,6 +174,7 @@ function renderStatus() {
   renderPaths(status);
   renderServerDetails(status);
   renderInstallMode(status);
+  renderSetupGate(status);
   renderConsoleControls(status);
 }
 
@@ -178,9 +188,22 @@ function healthValue(ok, goodText, badText) {
 function renderHealth(status) {
   const installed = isServerInstalled(status);
   const executableReady = hasServerExecutable(status);
+  const config = status.configuration || {};
   const items = [
     ["SteamCMD", healthValue(status.paths.steamcmd.exists, "Ready", "Missing")],
     ["Server files", healthValue(installed, "Installed", "Not installed")],
+    [
+      "Mandatory config",
+      config.ready
+        ? { text: "Ready", className: "ok" }
+        : { text: `Missing: ${configMissingText(status)}`, className: "bad" }
+    ],
+    [
+      "Owner ID",
+      config.values?.ownerIdSet
+        ? { text: "Set", className: "ok" }
+        : { text: "Required", className: "bad" }
+    ],
     [
       "Server executable",
       executableReady
@@ -191,7 +214,7 @@ function renderHealth(status) {
       "DedicatedServer.ini",
       status.paths.config.exists
         ? { text: "Found", className: "ok" }
-        : { text: installed ? "After first start" : "Not generated yet", className: "warn" }
+        : { text: config.ready ? "Will be created" : "Needs setup", className: config.ready ? "warn" : "bad" }
     ],
     [
       "Savegames folder",
@@ -314,12 +337,14 @@ function renderLogs() {
 function renderProfileForm() {
   const profile = state.profile;
   const form = $("#settingsForm");
+  form.ownerId.value = profile.server.ownerId || "";
   form.serverName.value = profile.server.name;
-  form.password.value = profile.server.password || "";
+  form.worldName.value = profile.server.worldName;
+  form.adminPassword.value = profile.server.adminPassword || "";
+  form.worldPassword.value = profile.server.worldPassword || profile.server.password || "";
   form.maxPlayers.value = profile.server.maxPlayers;
   form.port.value = profile.server.port;
   form.queryPort.value = profile.server.queryPort;
-  form.worldName.value = profile.server.worldName;
   form.launchArgs.value = profile.server.launchArgs;
   form.saveDir.value = profile.paths.saveDir;
 
@@ -331,7 +356,7 @@ function renderProfileForm() {
 }
 
 function renderMappings() {
-  const mappings = state.profile.iniMappings;
+  const mappings = state.profile.iniMappings || {};
   const rows = Object.entries(mappings)
     .map(
       ([field, mapping]) => `
@@ -339,11 +364,11 @@ function renderMappings() {
           <span>${escapeHtml(field)}</span>
           <label>
             <span>Section</span>
-            <input data-map-section value="${escapeAttr(mapping.section)}">
+            <input data-map-section value="${escapeAttr(mapping.section)}" disabled>
           </label>
           <label>
             <span>Key</span>
-            <input data-map-key value="${escapeAttr(mapping.key)}">
+            <input data-map-key value="${escapeAttr(mapping.key)}" disabled>
           </label>
         </div>
       `
@@ -433,6 +458,7 @@ function renderInstallMode(status) {
   const installed = isServerInstalled(status);
   const executableReady = hasServerExecutable(status);
   const savesReady = hasSaveFolder(status);
+  const configReady = isConfigReady(status);
   $("#installGate").hidden = installed;
 
   $$("[data-show-when-missing]").forEach((element) => {
@@ -445,7 +471,7 @@ function renderInstallMode(status) {
     element.disabled = !installed || taskIsActive();
   });
   $$("[data-requires-exe]").forEach((element) => {
-    element.disabled = !executableReady || taskIsActive();
+    element.disabled = !executableReady || !configReady || taskIsActive();
   });
   $$("[data-requires-saves]").forEach((element) => {
     element.disabled = !savesReady || taskIsActive();
@@ -453,7 +479,7 @@ function renderInstallMode(status) {
 
   const installButtons = $$("[data-action='install']");
   installButtons.forEach((button) => {
-    button.disabled = taskIsActive() && !button.hidden;
+    button.disabled = (!configReady || taskIsActive()) && !button.hidden;
   });
 
   const help = $("#installModeHelp");
@@ -463,13 +489,26 @@ function renderInstallMode(status) {
       : "Run the initial install first. After files are detected, this page switches to update-first controls and hides repair behind extra confirmation.";
   }
 
-  if (!executableReady && installed) {
+  if (!configReady) {
+    $("#actionHint").textContent = `Complete setup before install/start. Missing: ${configMissingText(status)}.`;
+  } else if (!executableReady && installed) {
     $("#actionHint").textContent = "Files were found, but the server executable was not detected.";
   } else if (!installed) {
     $("#actionHint").textContent = "Install the dedicated server before starting or updating it.";
   } else {
     renderReleaseNotes();
   }
+}
+
+function renderSetupGate(status) {
+  const gate = $("#setupGate");
+  if (!gate) return;
+  const ready = isConfigReady(status);
+  gate.hidden = ready;
+  if (ready) return;
+  $("#setupMissingList").innerHTML = (status.configuration?.missingRequired || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
 }
 
 function renderConsoleControls(status) {
@@ -495,12 +534,15 @@ function renderConsoleControls(status) {
 function readProfileFromForm() {
   const form = $("#settingsForm");
   const next = structuredClone(state.profile);
+  next.server.ownerId = form.ownerId.value.trim();
   next.server.name = form.serverName.value.trim();
-  next.server.password = form.password.value;
+  next.server.worldName = form.worldName.value.trim();
+  next.server.adminPassword = form.adminPassword.value;
+  next.server.worldPassword = form.worldPassword.value;
+  next.server.password = next.server.worldPassword;
   next.server.maxPlayers = Number(form.maxPlayers.value || 4);
   next.server.port = Number(form.port.value || 7777);
   next.server.queryPort = Number(form.queryPort.value || next.server.port + 1);
-  next.server.worldName = form.worldName.value.trim();
   next.server.launchArgs = form.launchArgs.value.trim();
   next.paths.saveDir = form.saveDir.value.trim();
 
@@ -538,11 +580,15 @@ async function saveSettings() {
   state.profile = payload.profile;
   state.status = payload.status;
   renderAll();
-  toast(
-    payload.status.paths.config.exists
-      ? "Settings saved. DedicatedServer.ini was updated using the current mappings."
-      : "Settings saved. DedicatedServer.ini will be updated after the server creates it."
-  );
+  if (!payload.status.configuration.ready) {
+    toast(`Settings saved. Finish required setup before install/start: ${configMissingText(payload.status)}.`);
+  } else {
+    toast(
+      payload.status.paths.config.exists
+        ? "Settings saved. DedicatedServer.ini was generated with the official Dragonwilds values."
+        : "Settings saved. DedicatedServer.ini will be generated before install/start."
+    );
+  }
 }
 
 async function runAction(action) {
@@ -563,6 +609,12 @@ async function runAction(action) {
   }
   if (["update"].includes(action) && !isServerInstalled()) {
     toast("Install the Dragonwilds dedicated server before running updates.");
+    return;
+  }
+  if (["install", "start", "restart"].includes(action) && !isConfigReady()) {
+    setView("dashboard");
+    $("#settingsForm").ownerId?.focus();
+    toast(`Complete dedicated server setup before continuing. Missing: ${configMissingText()}.`);
     return;
   }
   if (["start", "restart"].includes(action) && !hasServerExecutable()) {
@@ -707,6 +759,7 @@ function wireEvents() {
   });
 
   $("#saveSettingsTop").addEventListener("click", saveSettings);
+  $("#saveSetupGate").addEventListener("click", saveSettings);
   $("#saveSettingsDetail").addEventListener("click", saveSettings);
   $("#runFullCheck").addEventListener("click", (event) => manualHealthCheck(event.currentTarget));
   $("#refreshNow").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
@@ -733,7 +786,11 @@ function wireEvents() {
   $("#logSearch").addEventListener("input", renderLogs);
   $("#addCustomIni").addEventListener("click", () => {
     state.profile.customIniValues = state.profile.customIniValues || [];
-    state.profile.customIniValues.push({ section: "Server", key: "", value: "" });
+    state.profile.customIniValues.push({
+      section: "/Script/Dominion.DedicatedServerSettings",
+      key: "",
+      value: ""
+    });
     renderMappings();
   });
 }

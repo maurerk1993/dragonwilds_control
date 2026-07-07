@@ -5,6 +5,7 @@ const { spawn } = require("child_process");
 
 const root = path.resolve(__dirname, "..");
 const port = 8897;
+require("fs").rmSync(path.join(root, ".runtime-test"), { recursive: true, force: true });
 const child = spawn(process.execPath, ["server/index.js"], {
   cwd: root,
   env: {
@@ -79,8 +80,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.3.1") {
-    throw new Error(`Expected version 0.3.1, got ${app.version}`);
+  if (app.version !== "0.4.0") {
+    throw new Error(`Expected version 0.4.0, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
@@ -90,7 +91,12 @@ async function main() {
   await fs.mkdir(path.join(testServerDir, "steamapps"), { recursive: true });
   await fs.writeFile(path.join(testServerDir, "steamapps", "appmanifest_4019830.acf"), '"appid" "4019830"');
   profile.server.port = 28888;
+  profile.server.ownerId = "0002ff274ad9459abebf9ca7f3bed3cb";
   profile.server.name = "Smoke Test Dragonwilds Server";
+  profile.server.worldName = "SmokeWorld";
+  profile.server.adminPassword = "AdminSmokePassword";
+  profile.server.worldPassword = "WorldSmokePassword";
+  profile.server.password = profile.server.worldPassword;
   profile.paths.steamcmdDir = path.join(root, ".runtime-test", "steamcmd");
   profile.paths.serverDir = testServerDir;
   profile.paths.configPath = path.join(
@@ -108,10 +114,51 @@ async function main() {
   if (saved.profile.server.port !== 28888) {
     throw new Error("Settings save did not persist the server port.");
   }
+  if (!saved.status.configuration.ready) {
+    throw new Error(`Saved profile should be config-ready: ${saved.status.configuration.missingRequired.join(", ")}`);
+  }
+
+  const generatedIni = await fs.readFile(profile.paths.configPath, "utf8");
+  const expectedIniParts = [
+    ";METADATA=(Diff=true, UseCommands=true)",
+    "[/Script/Dominion.DedicatedServerSettings]",
+    "OwnerId=0002ff274ad9459abebf9ca7f3bed3cb",
+    "ServerName=Smoke Test Dragonwilds Server",
+    "DefaultWorldName=SmokeWorld",
+    "AdminPassword=AdminSmokePassword",
+    "WorldPassword=WorldSmokePassword"
+  ];
+  for (const part of expectedIniParts) {
+    if (!generatedIni.includes(part)) {
+      throw new Error(`Generated DedicatedServer.ini is missing: ${part}`);
+    }
+  }
+
+  const clearedProfile = JSON.parse(JSON.stringify(saved.profile));
+  clearedProfile.server.ownerId = "";
+  clearedProfile.server.name = "";
+  clearedProfile.server.worldName = "";
+  clearedProfile.server.adminPassword = "";
+  clearedProfile.server.worldPassword = "";
+  clearedProfile.server.password = "";
+  await fs.writeFile(path.join(root, ".runtime-test", "profile.json"), `${JSON.stringify(clearedProfile, null, 2)}\n`);
+  const hydratedProfile = await requestJson("/api/settings");
+  if (
+    hydratedProfile.server.ownerId !== "0002ff274ad9459abebf9ca7f3bed3cb" ||
+    hydratedProfile.server.name !== "Smoke Test Dragonwilds Server" ||
+    hydratedProfile.server.worldName !== "SmokeWorld" ||
+    hydratedProfile.server.adminPassword !== "AdminSmokePassword" ||
+    hydratedProfile.server.worldPassword !== "WorldSmokePassword"
+  ) {
+    throw new Error("Existing DedicatedServer.ini values were not hydrated into the profile.");
+  }
 
   const status = await requestJson("/api/status");
   if (status.selectedPort !== 28888) {
     throw new Error("Status did not report the saved server port.");
+  }
+  if (!status.configuration.ready || !status.paths.config.exists) {
+    throw new Error("Status did not report a ready generated DedicatedServer.ini.");
   }
   if (!status.paths.serverInstall.installed) {
     throw new Error("Status did not detect the fake dedicated server install.");

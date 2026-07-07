@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 - Official first-run server setup
+
+- Added a first-run setup prompt for the mandatory Dragonwilds dedicated server values: Owner ID, Server Name, Default World Name, and Admin Password.
+- Changed settings saves and server launches to generate `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini` with the official `/Script/Dominion.DedicatedServerSettings` section before install/start can continue.
+- Added support for the optional World Password value while preserving older saved password values as the World Password during profile migration.
+- Added existing INI hydration so an already configured server can populate the app profile from `DedicatedServer.ini` instead of showing false missing-setup warnings.
+- Updated health checks and action gating so install, start, and restart clearly explain which required setup values are missing.
+
+## 0.3.2 - Automatic administrator prompt
+
+- Changed the Windows packaged app manifest to request administrator access on launch so double-clicking the app shows the UAC prompt automatically.
+- Re-enabled executable resource editing during Windows packaging so the requested execution level is actually written into the built `.exe`.
+- Kept the runtime elevation relaunch fallback for extra protection if the app is ever launched from an unpacked or unusual build.
+
 ## 0.3.1 - Live install console and first-run fixes
 
 - Added live task console output for install, repair, update, backup, and stop tasks with much larger retained output.

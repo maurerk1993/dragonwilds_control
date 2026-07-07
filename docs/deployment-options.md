@@ -17,7 +17,7 @@ Pros:
 - Easiest server install.
 - Bundles the app runtime.
 - Creates desktop and Start Menu shortcuts.
-- Relaunches with Administrator rights so the default server folders can be managed.
+- Requests Administrator rights before the app opens so the default server folders can be managed.
 
 Tradeoffs:
 - The installer is unsigned until you add a code-signing certificate, so Windows may show a publisher warning.

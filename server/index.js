@@ -35,6 +35,15 @@ const taskOutputLimit = 5000;
 const taskOutputSnapshotLimit = 1200;
 const activityLogSnapshotLimit = 1800;
 const serverLogSnapshotLimit = 1500;
+const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
+const dedicatedServerMetadata = ";METADATA=(Diff=true, UseCommands=true)";
+const dedicatedConfigFields = [
+  { field: "ownerId", label: "Owner ID", key: "OwnerId", required: true },
+  { field: "name", label: "Server Name", key: "ServerName", required: true },
+  { field: "worldName", label: "Default World Name", key: "DefaultWorldName", required: true },
+  { field: "adminPassword", label: "Admin Password", key: "AdminPassword", required: true },
+  { field: "worldPassword", label: "World Password", key: "WorldPassword", required: false }
+];
 
 const defaultProfile = {
   appId: "4019830",
@@ -49,8 +58,11 @@ const defaultProfile = {
     backupDir: "C:\\GameServers\\RSDragonwildsDedicatedServer\\Backups"
   },
   server: {
+    ownerId: "",
     name: "The Dragonwilds Server",
     password: "",
+    adminPassword: "",
+    worldPassword: "",
     maxPlayers: 4,
     port: 7777,
     queryPort: 7778,
@@ -60,14 +72,11 @@ const defaultProfile = {
     launchArgs: "-log -NewConsole"
   },
   iniMappings: {
-    name: { section: "Server", key: "ServerName" },
-    password: { section: "Server", key: "ServerPassword" },
-    maxPlayers: { section: "Server", key: "MaxPlayers" },
-    port: { section: "Server", key: "Port" },
-    queryPort: { section: "Server", key: "QueryPort" },
-    publicServer: { section: "Server", key: "PublicServer" },
-    worldName: { section: "Server", key: "WorldName" },
-    autoSaveMinutes: { section: "Server", key: "AutoSaveIntervalMinutes" }
+    ownerId: { section: dedicatedServerSection, key: "OwnerId" },
+    name: { section: dedicatedServerSection, key: "ServerName" },
+    worldName: { section: dedicatedServerSection, key: "DefaultWorldName" },
+    adminPassword: { section: dedicatedServerSection, key: "AdminPassword" },
+    worldPassword: { section: dedicatedServerSection, key: "WorldPassword" }
   },
   customIniValues: [],
   writeIniOnSave: true,
@@ -120,44 +129,124 @@ async function writeJson(filePath, value) {
   await fsp.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function normalizeProfile(profile) {
+  const next = deepMerge(defaultProfile, profile || {});
+  if (!next.server.worldPassword && next.server.password) {
+    next.server.worldPassword = next.server.password;
+  }
+  next.server.password = next.server.worldPassword || "";
+  next.iniMappings = { ...defaultProfile.iniMappings };
+  next.customIniValues = Array.isArray(next.customIniValues) ? next.customIniValues : [];
+  return next;
+}
+
+async function readDedicatedServerIniValues(configPath) {
+  let text = "";
+  try {
+    text = await fsp.readFile(configPath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error;
+  }
+
+  const sectionPattern = new RegExp(`^\\s*\\[${escapeRegExp(dedicatedServerSection)}\\]\\s*$`, "i");
+  const anySectionPattern = /^\s*\[[^\]]+\]\s*$/;
+  const values = {};
+  let inSection = false;
+
+  for (const line of text.split(/\r?\n/)) {
+    if (sectionPattern.test(line)) {
+      inSection = true;
+      continue;
+    }
+    if (inSection && anySectionPattern.test(line)) break;
+    if (!inSection) continue;
+    const match = line.match(/^\s*([^=;#]+?)\s*=\s*(.*)$/);
+    if (!match) continue;
+    values[match[1].trim().toLowerCase()] = match[2].trim();
+  }
+
+  return {
+    ownerId: values.ownerid,
+    name: values.servername,
+    worldName: values.defaultworldname,
+    adminPassword: values.adminpassword,
+    worldPassword: values.worldpassword
+  };
+}
+
+async function hydrateProfileFromIni(profile) {
+  const next = normalizeProfile(profile);
+  const iniValues = await readDedicatedServerIniValues(next.paths.configPath);
+  for (const field of dedicatedConfigFields) {
+    const value = iniValues[field.field];
+    if (valueIsSet(value) && !valueIsSet(next.server[field.field])) {
+      next.server[field.field] = value;
+    }
+  }
+  next.server.password = next.server.worldPassword || "";
+  return next;
+}
+
 async function getProfile() {
   const stored = await readJson(profilePath, {});
-  return deepMerge(defaultProfile, stored);
+  return hydrateProfileFromIni(stored);
 }
 
 async function saveProfile(profile) {
-  const next = deepMerge(defaultProfile, profile);
+  const next = normalizeProfile(profile);
   await writeJson(profilePath, next);
   serverDetectionCache = null;
-  if (next.writeIniOnSave && exists(next.paths.configPath)) {
+  const config = getDedicatedConfigStatus(next);
+  if (next.writeIniOnSave && config.ready) {
     await writeDedicatedServerIni(next);
   } else if (next.writeIniOnSave) {
     appendActivity(
-      "Settings saved to profile. DedicatedServer.ini is not present yet; the game server usually creates it on first start."
+      `Settings saved to profile. DedicatedServer.ini was not written because setup is incomplete: ${config.missingRequired.join(", ")}.`
     );
   }
   return next;
 }
 
-function normalizeBool(value) {
-  return value ? "true" : "false";
+function valueIsSet(value) {
+  return String(value || "").trim().length > 0;
+}
+
+function getDedicatedConfigStatus(profile) {
+  const missingRequired = dedicatedConfigFields
+    .filter((field) => field.required && !valueIsSet(profile.server[field.field]))
+    .map((field) => field.label);
+
+  return {
+    ready: missingRequired.length === 0,
+    missingRequired,
+    requiredFields: dedicatedConfigFields.filter((field) => field.required).map((field) => field.label),
+    optionalFields: dedicatedConfigFields.filter((field) => !field.required).map((field) => field.label),
+    values: {
+      ownerIdSet: valueIsSet(profile.server.ownerId),
+      serverNameSet: valueIsSet(profile.server.name),
+      defaultWorldNameSet: valueIsSet(profile.server.worldName),
+      adminPasswordSet: valueIsSet(profile.server.adminPassword),
+      worldPasswordSet: valueIsSet(profile.server.worldPassword)
+    }
+  };
+}
+
+function assertDedicatedConfigReady(profile, action) {
+  const config = getDedicatedConfigStatus(profile);
+  if (!config.ready) {
+    throw new Error(
+      `Complete dedicated server setup before ${action}. Missing: ${config.missingRequired.join(", ")}.`
+    );
+  }
+  return config;
 }
 
 function iniValuesFromProfile(profile) {
-  const values = [
-    ["name", profile.server.name],
-    ["password", profile.server.password],
-    ["maxPlayers", profile.server.maxPlayers],
-    ["port", profile.server.port],
-    ["queryPort", profile.server.queryPort],
-    ["publicServer", normalizeBool(profile.server.publicServer)],
-    ["worldName", profile.server.worldName],
-    ["autoSaveMinutes", profile.server.autoSaveMinutes]
-  ];
-
   const mapped = [];
-  for (const [field, value] of values) {
-    const mapping = profile.iniMappings[field];
+  for (const field of dedicatedConfigFields) {
+    const mapping = defaultProfile.iniMappings[field.field];
+    const value = profile.server[field.field];
     if (!mapping || !mapping.section || !mapping.key) continue;
     mapped.push({
       section: mapping.section,
@@ -187,10 +276,13 @@ async function writeDedicatedServerIni(profile) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     lines = [
-      "; Generated by Dragonwilds Server Control",
-      "; If official Dragonwilds config keys differ, edit the key mappings in the app.",
-      ""
+      dedicatedServerMetadata,
+      `[${dedicatedServerSection}]`
     ];
+  }
+
+  if (!lines.some((line) => line.trim() === dedicatedServerMetadata)) {
+    lines.unshift(dedicatedServerMetadata);
   }
 
   for (const entry of iniValuesFromProfile(profile)) {
@@ -217,8 +309,7 @@ function upsertIniValue(lines, section, key, value) {
     if (anySectionPattern.test(line)) break;
     if (keyPattern.test(line)) {
       const prefix = line.match(/^(\s*)/)[1] || "";
-      const comment = line.includes(";") ? ` ${line.slice(line.indexOf(";")).trim()}` : "";
-      const replacement = `${prefix}${key}=${value}${comment}`;
+      const replacement = `${prefix}${key}=${value}`;
       return lines.map((current, currentIndex) => (currentIndex === index ? replacement : current));
     }
     insertIndex = index + 1;
@@ -540,6 +631,13 @@ function steamcmdString(value) {
 }
 
 async function runInstall(profile, validate) {
+  if (validate) {
+    assertDedicatedConfigReady(profile, "installing or repairing the server");
+    await writeDedicatedServerIni(profile);
+  } else if (getDedicatedConfigStatus(profile).ready) {
+    await writeDedicatedServerIni(profile);
+  }
+
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
   const steamcmdZip = path.join(os.tmpdir(), "steamcmd.zip");
   const scriptName = validate ? "steamcmd-install-validate.txt" : "steamcmd-update.txt";
@@ -577,6 +675,7 @@ async function startGameServer(profile) {
     throw new Error("Server process is already running from this control app.");
   }
 
+  assertDedicatedConfigReady(profile, "starting the server");
   const install = await detectServerInstall(profile);
   if (!install.serverExe) {
     if (install.installed) {
@@ -588,13 +687,7 @@ async function startGameServer(profile) {
   }
 
   const args = splitArgs(profile.server.launchArgs);
-  if (exists(profile.paths.configPath)) {
-    await writeDedicatedServerIni(profile);
-  } else {
-    appendActivity(
-      "DedicatedServer.ini is not present before launch. Starting server first so the game can generate its config files."
-    );
-  }
+  await writeDedicatedServerIni(profile);
 
   appendActivity(`Starting server: ${install.serverExe} ${args.join(" ")}`);
   serverProcess = spawn(install.serverExe, args, {
@@ -724,6 +817,7 @@ async function getStatus() {
   const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit);
   const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit);
   const tcpPortOpen = await checkTcpPort(profile.server.port);
+  const configuration = getDedicatedConfigStatus(profile);
 
   return {
     appVersion: appPackage.version,
@@ -733,6 +827,7 @@ async function getStatus() {
     task: taskSnapshot(),
     selectedPort: Number(profile.server.port),
     tcpPortOpen,
+    configuration,
     paths: {
       steamcmd: { path: steamcmdExe, exists: exists(steamcmdExe) },
       serverDir: { path: profile.paths.serverDir, exists: install.serverDirExists },
