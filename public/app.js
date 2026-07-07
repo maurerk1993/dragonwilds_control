@@ -64,6 +64,15 @@ function isServerInstalled(status = state.status) {
   return Boolean(status?.paths?.serverInstall?.installed || status?.paths?.serverExe?.exists);
 }
 
+function isServerInstallPartial(status = state.status) {
+  return Boolean(status?.paths?.serverInstall?.partialInstallDetected);
+}
+
+function isInstallOrUpdateTaskActive(status = state.status) {
+  const task = status?.task;
+  return Boolean(task && ["running", "stopping"].includes(task.status) && /install|update|repair/i.test(task.name || ""));
+}
+
 function hasServerExecutable(status = state.status) {
   return Boolean(status?.paths?.serverExe?.exists);
 }
@@ -156,6 +165,8 @@ function renderStatus() {
   if (!status || !profile) return;
   const installed = isServerInstalled(status);
   const executableReady = hasServerExecutable(status);
+  const installStillRunning = isInstallOrUpdateTaskActive(status);
+  const partialInstall = isServerInstallPartial(status);
 
   setText("appVersion", status.appVersion);
   setText("selectedPort", String(status.selectedPort));
@@ -164,7 +175,10 @@ function renderStatus() {
   setText("serverPid", status.serverPid ? `PID ${status.serverPid}` : "Process not owned by app");
   setText("steamStatus", status.paths.steamcmd.exists ? "READY" : "MISSING");
   setText("steamPath", status.paths.steamcmd.path);
-  setText("serverFileStatus", executableReady ? "READY" : installed ? "FILES FOUND" : "NOT INSTALLED");
+  setText(
+    "serverFileStatus",
+    executableReady ? "READY" : installStillRunning || partialInstall ? "INSTALLING" : "NOT INSTALLED"
+  );
   setText("serverPath", status.paths.serverExe.path || status.paths.serverDir.path);
   setText(
     "portProbe",
@@ -211,6 +225,8 @@ function renderHealth(status) {
   const config = status.configuration || {};
   const setupValuesReady = hasRequiredSetupValues(status);
   const templateReady = Boolean(status.paths.configTemplate?.exists);
+  const installStillRunning = isInstallOrUpdateTaskActive(status);
+  const partialInstall = isServerInstallPartial(status);
   const configFileStatus = status.paths.config.exists
     ? { text: "Found", className: "ok" }
     : installed && templateReady
@@ -220,16 +236,27 @@ function renderHealth(status) {
         : { text: "Install first", className: "warn" };
   const items = [
     ["SteamCMD", healthValue(status.paths.steamcmd.exists, "Ready", "Missing")],
-    ["Server files", healthValue(installed, "Installed", "Not installed")],
+    [
+      "Server files",
+      installed
+        ? { text: "Installed", className: "ok" }
+        : installStillRunning || partialInstall
+          ? { text: "Installing", className: "warn" }
+          : { text: "Not installed", className: "bad" }
+    ],
     [
       "Setup values",
-      setupValuesReady
+      !installed
+        ? { text: "After install", className: "warn" }
+        : setupValuesReady
         ? { text: "Ready", className: "ok" }
         : { text: `Missing: ${configMissingText(status)}`, className: "bad" }
     ],
     [
       "Owner ID",
-      config.values?.ownerIdSet
+      !installed
+        ? { text: "After install", className: "warn" }
+        : config.values?.ownerIdSet
         ? { text: "Set", className: "ok" }
         : { text: "Required", className: "bad" }
     ],
@@ -491,6 +518,8 @@ function renderUpdateState() {
 function renderInstallMode(status) {
   const installed = isServerInstalled(status);
   const executableReady = hasServerExecutable(status);
+  const installStillRunning = isInstallOrUpdateTaskActive(status);
+  const partialInstall = isServerInstallPartial(status);
   const savesReady = hasSaveFolder(status);
   const configReady = isConfigReady(status);
   const setupValuesReady = hasRequiredSetupValues(status);
@@ -521,10 +550,14 @@ function renderInstallMode(status) {
   if (help) {
     help.textContent = installed
       ? "Server files are detected. Use Update Installed Server for normal patches. Advanced repair validates files and asks for extra confirmation before it runs."
+      : installStillRunning || partialInstall
+        ? "SteamCMD has started writing files, but the dedicated server executable is not detected yet. Wait for the external command window to finish before setup."
       : "Run the initial install first. After files are detected, this page switches to update-first controls and hides repair behind extra confirmation.";
   }
 
-  if (!installed) {
+  if (!installed && (installStillRunning || partialInstall)) {
+    $("#actionHint").textContent = "Install is still running or incomplete. Wait for the external command window to finish, then refresh.";
+  } else if (!installed) {
     $("#actionHint").textContent = "Install the dedicated server first. Setup prompts appear after files are detected.";
   } else if (!setupValuesReady) {
     $("#actionHint").textContent = `Complete setup before start. Missing: ${configMissingText(status)}.`;
@@ -542,7 +575,9 @@ function renderSetupGate(status) {
   if (!gate) return;
   const ready = isConfigReady(status);
   const installed = isServerInstalled(status);
-  gate.hidden = !installed || ready;
+  const installStillRunning = isInstallOrUpdateTaskActive(status);
+  const partialInstall = isServerInstallPartial(status);
+  gate.hidden = !installed || ready || installStillRunning || partialInstall;
   if (ready) return;
   $("#setupMissingList").innerHTML = configMissingItems(status)
     .map((item) => `<li>${escapeHtml(item)}</li>`)

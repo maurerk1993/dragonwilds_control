@@ -268,7 +268,10 @@ async function saveProfile(profile) {
   const config = getDedicatedConfigStatus(next);
   if (next.writeIniOnSave && config.ready) {
     const install = await detectServerInstall(next);
-    if (install.installed) {
+    if (isInstallTaskRunning()) {
+      lastIniPatchError = null;
+      appendActivity("Settings saved. DedicatedServer.ini patching is waiting for the current install/update task to finish.");
+    } else if (install.readyForSetup) {
       try {
         await patchDedicatedServerIni(next, { allowTemplateCopy: true });
       } catch (error) {
@@ -277,7 +280,7 @@ async function saveProfile(profile) {
       }
     } else {
       lastIniPatchError = null;
-      appendActivity("Settings saved. Install the dedicated server before patching DedicatedServer.ini.");
+      appendActivity("Settings saved. Waiting for the Dragonwilds server executable before checking DedicatedServer.ini.");
     }
   } else if (next.writeIniOnSave) {
     lastIniPatchError = null;
@@ -548,13 +551,16 @@ async function detectServerInstall(profile) {
   const manifestCandidates = steamAppManifestCandidates(profile);
   const manifestPath = manifestCandidates.find((candidate) => exists(candidate)) || null;
   const payloadFileCount = await countServerPayloadFiles(profile.paths.serverDir);
-  const installed = Boolean(serverExe || manifestPath || payloadFileCount >= 3);
+  const readyForSetup = Boolean(serverExe);
+  const installed = readyForSetup;
   const result = {
     installed,
+    readyForSetup,
     serverDirExists,
     serverExe,
     manifestPath,
     payloadFileCount,
+    partialInstallDetected: Boolean(!readyForSetup && (manifestPath || payloadFileCount > 0)),
     expectedExecutables: serverExeCandidates
   };
 
@@ -680,6 +686,14 @@ function taskSnapshot() {
     outputLineCount: activeTask.output.length,
     recentOutput: activeTask.output.slice(-taskOutputSnapshotLimit)
   };
+}
+
+function isInstallTaskRunning() {
+  return Boolean(
+    activeTask &&
+      ["running", "stopping"].includes(activeTask.status) &&
+      /install|update|repair/i.test(activeTask.name || "")
+  );
 }
 
 function safeTaskFileName(name) {
@@ -1084,9 +1098,15 @@ async function getStatus() {
   const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit, { maxAgeMs: logRetentionMs });
   const tcpPortOpen = await checkTcpPort(profile.server.port);
   const configuration = getDedicatedConfigStatus(profile);
-  const configExists = exists(profile.paths.configPath);
-  const configTemplate = getDedicatedConfigTemplateStatus(profile);
-  const configText = await readDedicatedServerIniText(profile.paths.configPath);
+  const configExists = install.readyForSetup ? exists(profile.paths.configPath) : false;
+  const configTemplate = install.readyForSetup
+    ? getDedicatedConfigTemplateStatus(profile)
+    : {
+        path: dedicatedConfigTemplateCandidates(profile)[0],
+        exists: false,
+        candidates: dedicatedConfigTemplateCandidates(profile)
+      };
+  const configText = install.readyForSetup ? await readDedicatedServerIniText(profile.paths.configPath) : "";
   const selectedPort = assertValidGamePort(profile.server.port);
   const secondaryPort = getSecondaryPort(selectedPort);
   const effectiveLaunchArgs = getEffectiveLaunchArgs(profile);
@@ -1108,7 +1128,7 @@ async function getStatus() {
       ...configuration,
       iniReady: configuration.ready && configExists,
       templateAvailable: configTemplate.exists,
-      lastPatchError: lastIniPatchError,
+      lastPatchError: install.readyForSetup ? lastIniPatchError : null,
       iniText: configText
     },
     paths: {
@@ -1116,6 +1136,8 @@ async function getStatus() {
       serverDir: { path: profile.paths.serverDir, exists: install.serverDirExists },
       serverInstall: {
         installed: install.installed,
+        readyForSetup: install.readyForSetup,
+        partialInstallDetected: install.partialInstallDetected,
         manifestPath: install.manifestPath,
         payloadFileCount: install.payloadFileCount,
         expectedExecutables: install.expectedExecutables

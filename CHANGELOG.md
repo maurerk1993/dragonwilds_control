@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3 - Wait for install completion
+
+- Changed install detection so SteamCMD manifests or partial payload files no longer count as a complete dedicated server install.
+- Hid first-run setup prompts until the Dragonwilds server executable is detected.
+- Stopped `DedicatedServer.ini` template checks and patch attempts while install/update is still running or before the server executable exists.
+- Added smoke coverage for manifest-only partial installs so the app does not report missing INI errors too early.
+
 ## 0.5.2 - Visible install command window
 
 - Changed PowerShell-backed tasks so install, update, repair, backup, restore, and stop actions launch through a real external `cmd.exe` window on Windows.

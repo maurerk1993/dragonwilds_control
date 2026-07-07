@@ -80,8 +80,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.2") {
-    throw new Error(`Expected version 0.5.2, got ${app.version}`);
+  if (app.version !== "0.5.3") {
+    throw new Error(`Expected version 0.5.3, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
@@ -103,9 +103,9 @@ async function main() {
     "DedicatedServer.ini"
   );
   await fs.mkdir(testServerDir, { recursive: true });
-  await fs.writeFile(path.join(testServerDir, "RSDragonwildsServer.exe"), "fake exe for detection smoke test");
   await fs.mkdir(path.join(testServerDir, "steamapps"), { recursive: true });
   await fs.writeFile(path.join(testServerDir, "steamapps", "appmanifest_4019830.acf"), '"appid" "4019830"');
+  await fs.writeFile(path.join(testServerDir, "steamcmd-downloading.tmp"), "partial payload marker");
   profile.server.port = 28888;
   profile.server.launchArgs = "-log -NewConsole -port=7777";
   profile.server.ownerId = "0002ff274ad9459abebf9ca7f3bed3cb";
@@ -135,6 +135,24 @@ async function main() {
     }
   }
 
+  const savedDuringPartialInstall = await requestJson("/api/settings", "PUT", profile);
+  if (savedDuringPartialInstall.status.paths.serverInstall.installed) {
+    throw new Error("Manifest-only install should not be treated as installed before the server executable exists.");
+  }
+  if (!savedDuringPartialInstall.status.paths.serverInstall.partialInstallDetected) {
+    throw new Error("Manifest-only install should report a partial install state.");
+  }
+  if (savedDuringPartialInstall.status.configuration.lastPatchError) {
+    throw new Error("Saving setup during a partial install should not report a missing DedicatedServer.ini patch error.");
+  }
+  try {
+    await fs.access(configPath);
+    throw new Error("DedicatedServer.ini was created during a partial install.");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  await fs.writeFile(path.join(testServerDir, "RSDragonwildsServer.exe"), "fake exe for detection smoke test");
   const savedWithoutTemplate = await requestJson("/api/settings", "PUT", profile);
   try {
     await fs.access(configPath);

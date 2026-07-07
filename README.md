@@ -37,6 +37,8 @@ The app patches those values into the official `RSDragonwilds\Saved\Config\Windo
 
 Dragonwilds also uses the next port as its Secondary Port. If the Game Port is `7777`, the Secondary Port is `7778`. The app launches the server with `-port=<Game Port>` and shows both values so you can forward UDP for both ports in Windows Firewall, your router, and any host/ISP firewall.
 
+The app does not treat SteamCMD's early manifest file or partial download files as a complete install. First-run setup stays locked until the Dragonwilds server executable is detected. `DedicatedServer.ini` is not checked or patched while install/update is still running or before the executable exists.
+
 For MSI packaging:
 
 ```powershell
