@@ -24,7 +24,7 @@ The generated setup `.exe` will be in `dist\`. Copy it to the Windows 11 server,
 
 The packaged app asks Windows for Administrator elevation when it opens. This is intentional so it can create and manage the default `C:\SteamCMD` and `C:\GameServers` paths.
 
-On first setup, enter the mandatory Dragonwilds dedicated server values before running the install/start actions:
+On a fresh machine, run the initial server install first. After server files are detected, enter the mandatory Dragonwilds dedicated server values before starting:
 
 - Owner ID: your RuneScape: Dragonwilds Player ID from the in-game Settings menu
 - Server Name
@@ -32,7 +32,7 @@ On first setup, enter the mandatory Dragonwilds dedicated server values before r
 - Admin Password
 - Optional World Password
 
-The app writes those values to `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini` using the official `/Script/Dominion.DedicatedServerSettings` section.
+The app patches those values into the official `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini` file. If the Windows file is missing, it first copies the installed official Linux template from `RSDragonwilds\Saved\Config\Linux\DedicatedServer.ini` and then patches the `/Script/Dominion.DedicatedServerSettings` section.
 
 For MSI packaging:
 
@@ -71,11 +71,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
 
 ## DedicatedServer.ini Configuration
 
-The app writes a local JSON profile and updates `DedicatedServer.ini` when the required official values are present. The server port is entered during first-run setup and defaults to `7777`.
+The app writes a local JSON profile and updates `DedicatedServer.ini` only after the server files are installed and the required official values are present. The server port is entered during setup and defaults to `7777`.
 
-Dragonwilds requires the Windows dedicated server config at `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`. The app generates that file with `OwnerId`, `ServerName`, `DefaultWorldName`, `AdminPassword`, and optional `WorldPassword`. Stop the server before changing these values because Dragonwilds documentation warns that changes made while the server is running can be lost.
+Dragonwilds requires the Windows dedicated server config at `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`. The app does not generate this file from scratch. It patches an existing Windows config, or copies the installed official Linux template from `RSDragonwilds\Saved\Config\Linux\DedicatedServer.ini` into `WindowsServer` before patching `OwnerId`, `ServerName`, `DefaultWorldName`, `AdminPassword`, and optional `WorldPassword`. Stop the server before changing these values because Dragonwilds documentation warns that changes made while the server is running can be lost.
 
 The dashboard shows the current raw `DedicatedServer.ini` contents in a read-only viewer. The unfinished Settings page is intentionally hidden until the editing workflow is ready. If an existing `DedicatedServer.ini` is already present, the app reads those official values back into the profile so existing installs can be managed without retyping everything.
+
+## Console And Logs
+
+The Console tab is the primary place to watch live install/update/repair output, server log lines, and control activity. The dashboard only shows a compact console summary so the main screen does not become a cramped terminal.
+
+Long-running tasks request a visible Windows command window while still mirroring stdout/stderr into the Console tab. If SteamCMD or PowerShell needs direct attention, use the external command window; the in-app Console remains useful for searching and retained history.
+
+The control app prunes its own activity log to the most recent 72 hours. Game server log files are read through the same recent-log view but are not deleted by the app.
 
 ## Backups
 
@@ -97,4 +105,4 @@ See [docs/app-update-options.md](docs/app-update-options.md). The packaged app c
 npm test
 ```
 
-The smoke test starts the local dashboard on a test port, verifies the API, saves a test port and required dedicated-server setup values, confirms `DedicatedServer.ini` is generated, and confirms the dashboard HTML loads.
+The smoke test starts the local dashboard on a test port, verifies the API, saves a test port and required dedicated-server setup values, confirms `DedicatedServer.ini` is not fabricated without an official template, confirms the installed template is copied and patched, and confirms the dashboard HTML loads.

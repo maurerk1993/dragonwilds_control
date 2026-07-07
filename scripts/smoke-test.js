@@ -80,12 +80,28 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.4.1") {
-    throw new Error(`Expected version 0.4.1, got ${app.version}`);
+  if (app.version !== "0.5.0") {
+    throw new Error(`Expected version 0.5.0, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
   const testServerDir = path.join(root, ".runtime-test", "server");
+  const configPath = path.join(
+    testServerDir,
+    "RSDragonwilds",
+    "Saved",
+    "Config",
+    "WindowsServer",
+    "DedicatedServer.ini"
+  );
+  const linuxTemplatePath = path.join(
+    testServerDir,
+    "RSDragonwilds",
+    "Saved",
+    "Config",
+    "Linux",
+    "DedicatedServer.ini"
+  );
   await fs.mkdir(testServerDir, { recursive: true });
   await fs.writeFile(path.join(testServerDir, "RSDragonwildsServer.exe"), "fake exe for detection smoke test");
   await fs.mkdir(path.join(testServerDir, "steamapps"), { recursive: true });
@@ -99,17 +115,39 @@ async function main() {
   profile.server.password = profile.server.worldPassword;
   profile.paths.steamcmdDir = path.join(root, ".runtime-test", "steamcmd");
   profile.paths.serverDir = testServerDir;
-  profile.paths.configPath = path.join(
-    testServerDir,
-    "RSDragonwilds",
-    "Saved",
-    "Config",
-    "WindowsServer",
-    "DedicatedServer.ini"
-  );
+  profile.paths.configPath = configPath;
   profile.paths.saveDir = path.join(testServerDir, "RSDragonwilds", "Saved", "Savegames");
   profile.paths.logPath = path.join(testServerDir, "RSDragonwilds", "Saved", "Logs", "RSDragonwilds.log");
   profile.paths.backupDir = path.join(testServerDir, "Backups");
+  const savedWithoutTemplate = await requestJson("/api/settings", "PUT", profile);
+  try {
+    await fs.access(configPath);
+    throw new Error("DedicatedServer.ini was created even though no official template existed.");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (!savedWithoutTemplate.status.configuration.lastPatchError) {
+    throw new Error("Saving setup without an official template should report a patch error.");
+  }
+
+  await fs.mkdir(path.dirname(linuxTemplatePath), { recursive: true });
+  await fs.writeFile(
+    linuxTemplatePath,
+    [
+      ";METADATA=(Diff=true, UseCommands=true)",
+      "[/Script/Dominion.DedicatedServerSettings]",
+      "OwnerId=",
+      "ServerName=Template Server",
+      "DefaultWorldName=",
+      "AdminPassword=",
+      "WorldPassword=",
+      "ServerGuid=template-guid-should-survive",
+      "bFutureOfficialSetting=True",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+
   const saved = await requestJson("/api/settings", "PUT", profile);
   if (saved.profile.server.port !== 28888) {
     throw new Error("Settings save did not persist the server port.");
@@ -118,7 +156,11 @@ async function main() {
     throw new Error(`Saved profile should be config-ready: ${saved.status.configuration.missingRequired.join(", ")}`);
   }
 
-  const generatedIni = await fs.readFile(profile.paths.configPath, "utf8");
+  if (saved.status.configuration.lastPatchError) {
+    throw new Error(`DedicatedServer.ini should patch cleanly after template exists: ${saved.status.configuration.lastPatchError.message}`);
+  }
+
+  const patchedIni = await fs.readFile(profile.paths.configPath, "utf8");
   const expectedIniParts = [
     ";METADATA=(Diff=true, UseCommands=true)",
     "[/Script/Dominion.DedicatedServerSettings]",
@@ -126,11 +168,13 @@ async function main() {
     "ServerName=Smoke Test Dragonwilds Server",
     "DefaultWorldName=SmokeWorld",
     "AdminPassword=AdminSmokePassword",
-    "WorldPassword=WorldSmokePassword"
+    "WorldPassword=WorldSmokePassword",
+    "ServerGuid=template-guid-should-survive",
+    "bFutureOfficialSetting=True"
   ];
   for (const part of expectedIniParts) {
-    if (!generatedIni.includes(part)) {
-      throw new Error(`Generated DedicatedServer.ini is missing: ${part}`);
+    if (!patchedIni.includes(part)) {
+      throw new Error(`Patched DedicatedServer.ini is missing: ${part}`);
     }
   }
 
@@ -157,11 +201,17 @@ async function main() {
   if (status.selectedPort !== 28888) {
     throw new Error("Status did not report the saved server port.");
   }
-  if (!status.configuration.ready || !status.paths.config.exists) {
-    throw new Error("Status did not report a ready generated DedicatedServer.ini.");
+  if (!status.configuration.ready || !status.configuration.iniReady || !status.paths.config.exists) {
+    throw new Error("Status did not report a ready patched DedicatedServer.ini.");
   }
   if (!status.configuration.iniText || !status.configuration.iniText.includes("OwnerId=0002ff274ad9459abebf9ca7f3bed3cb")) {
     throw new Error("Status did not include the DedicatedServer.ini contents.");
+  }
+  if (!status.paths.configTemplate.exists || status.paths.configTemplate.path !== linuxTemplatePath) {
+    throw new Error("Status did not report the official Linux DedicatedServer.ini template.");
+  }
+  if (status.logRetentionHours !== 72) {
+    throw new Error(`Status did not report 72-hour log retention: ${status.logRetentionHours}`);
   }
   if (!status.paths.serverInstall.installed) {
     throw new Error("Status did not detect the fake dedicated server install.");
@@ -180,8 +230,14 @@ async function main() {
   if (!page.includes("Dragonwilds Server Control")) {
     throw new Error("Dashboard HTML did not load.");
   }
+  if (!page.includes('data-view="console"') || !page.includes('id="consoleView"') || !page.includes("consoleSummary")) {
+    throw new Error("Dashboard HTML is missing the dedicated Console tab markup.");
+  }
   if (!page.includes("data-console-form") || !page.includes("icon-restart") || !page.includes("iniFileContents")) {
-    throw new Error("Dashboard HTML is missing live console, SVG icon, or INI viewer markup.");
+    throw new Error("Dashboard HTML is missing console form, SVG icon, or INI viewer markup.");
+  }
+  if (page.includes('id="logOutput"') || page.includes('data-view="logs"')) {
+    throw new Error("Old dashboard log terminal or Logs nav markup should not be present.");
   }
   if (page.includes('data-view="settings"') || page.includes('id="settingsView"')) {
     throw new Error("Settings page markup should not be present.");

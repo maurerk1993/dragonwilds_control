@@ -72,12 +72,29 @@ function hasSaveFolder(status = state.status) {
   return Boolean(status?.paths?.saves?.exists);
 }
 
-function isConfigReady(status = state.status) {
+function hasRequiredSetupValues(status = state.status) {
   return Boolean(status?.configuration?.ready);
 }
 
-function configMissingText(status = state.status) {
+function hasWindowsConfig(status = state.status) {
+  return Boolean(status?.paths?.config?.exists);
+}
+
+function isConfigReady(status = state.status) {
+  return Boolean(status?.configuration?.iniReady ?? (hasRequiredSetupValues(status) && hasWindowsConfig(status)));
+}
+
+function configMissingItems(status = state.status) {
   const missing = status?.configuration?.missingRequired || [];
+  const items = [...missing];
+  if (isServerInstalled(status) && hasRequiredSetupValues(status) && !hasWindowsConfig(status)) {
+    items.push("DedicatedServer.ini Windows copy");
+  }
+  return items;
+}
+
+function configMissingText(status = state.status) {
+  const missing = configMissingItems(status);
   return missing.length ? missing.join(", ") : "required setup values";
 }
 
@@ -189,12 +206,21 @@ function renderHealth(status) {
   const installed = isServerInstalled(status);
   const executableReady = hasServerExecutable(status);
   const config = status.configuration || {};
+  const setupValuesReady = hasRequiredSetupValues(status);
+  const templateReady = Boolean(status.paths.configTemplate?.exists);
+  const configFileStatus = status.paths.config.exists
+    ? { text: "Found", className: "ok" }
+    : installed && templateReady
+      ? { text: "Template ready", className: "warn" }
+      : installed
+        ? { text: "Template missing", className: "bad" }
+        : { text: "Install first", className: "warn" };
   const items = [
     ["SteamCMD", healthValue(status.paths.steamcmd.exists, "Ready", "Missing")],
     ["Server files", healthValue(installed, "Installed", "Not installed")],
     [
-      "Mandatory config",
-      config.ready
+      "Setup values",
+      setupValuesReady
         ? { text: "Ready", className: "ok" }
         : { text: `Missing: ${configMissingText(status)}`, className: "bad" }
     ],
@@ -212,9 +238,7 @@ function renderHealth(status) {
     ],
     [
       "DedicatedServer.ini",
-      status.paths.config.exists
-        ? { text: "Found", className: "ok" }
-        : { text: config.ready ? "Will be created" : "Needs setup", className: config.ready ? "warn" : "bad" }
+      configFileStatus
     ],
     [
       "Savegames folder",
@@ -247,6 +271,7 @@ function renderPaths(status) {
     ["Executable", status.paths.serverExe.path || "Not found yet"],
     ["Steam manifest", status.paths.serverInstall?.manifestPath || "Not found yet"],
     ["Config", status.paths.config.path],
+    ["Official Linux template", status.paths.configTemplate?.path || "Not found yet"],
     ["Savegames", status.paths.saves.path],
     ["Log file", status.paths.log.path],
     ["Backups", status.paths.backups.path]
@@ -310,28 +335,67 @@ function renderBackups() {
   $("#allBackups").innerHTML = list;
 }
 
-function renderLogs() {
-  const search = ($("#logSearch")?.value || "").toLowerCase();
-  const task = state.status?.task;
+function buildConsoleLines(status = state.status) {
+  const task = status?.task;
   const taskLines = task
     ? [
-        `[TASK] ${task.name} - ${task.status}${task.outputLineCount ? ` (${task.outputLineCount} retained lines)` : ""}`,
+        `[TASK] ${task.name} - ${task.status}${task.outputLineCount ? ` (${task.outputLineCount} retained lines)` : ""}${task.externalWindow ? " - external window requested" : ""}`,
         ...(task.recentOutput || []).map((line) => `[TASK] ${line}`)
       ]
     : [];
-  const combined = [
+  return [
     ...taskLines,
-    ...(state.status?.logLines || []).map((line) => `[SERVER] ${line}`),
-    ...(state.status?.activityLines || []).map((line) => `[CONTROL] ${line}`)
+    ...(status?.logLines || []).map((line) => `[SERVER] ${line}`),
+    ...(status?.activityLines || []).map((line) => `[CONTROL] ${line}`)
   ];
-  const lines = search ? combined.filter((line) => line.toLowerCase().includes(search)) : combined;
-  const output = lines.slice(-1600).join("\n") || "No logs found yet.";
-  $("#logOutput").textContent = output;
-  $("#fullLogOutput").textContent = output;
-  if ($("#autoScroll").checked) {
-    $("#logOutput").scrollTop = $("#logOutput").scrollHeight;
+}
+
+function statCard(label, value) {
+  return `
+    <div class="console-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong title="${escapeAttr(value)}">${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderConsoleSummary(status = state.status) {
+  const task = status?.task;
+  const active = ["running", "stopping"].includes(task?.status);
+  const summary = $("#consoleSummary");
+  if (summary) {
+    summary.innerHTML = [
+      statCard("Task", active ? `${task.name} (${task.status})` : "No running task"),
+      statCard("Window", task?.externalWindow ? "External command window" : "None active"),
+      statCard("Retained", `${status?.logRetentionHours || 72} hours`),
+      statCard("Lines", String(buildConsoleLines(status).length))
+    ].join("");
   }
-  $("#fullLogOutput").scrollTop = $("#fullLogOutput").scrollHeight;
+
+  const meta = $("#consoleMeta");
+  if (meta) {
+    meta.innerHTML = [
+      statCard("Task", active ? `${task.name} (${task.status})` : "No running task"),
+      statCard("Console Input", task?.canReceiveInput ? "Ready" : "Not available"),
+      statCard("Window", task?.externalWindow ? "External command window" : "None active"),
+      statCard("Retention", `${status?.logRetentionHours || 72} hours`)
+    ].join("");
+  }
+}
+
+function renderLogs() {
+  const search = ($("#consoleSearch")?.value || "").toLowerCase();
+  const combined = buildConsoleLines(state.status);
+  const lines = search ? combined.filter((line) => line.toLowerCase().includes(search)) : combined;
+  const output = lines.join("\n") || "No console output found in the retained window.";
+  const fullOutput = $("#fullLogOutput");
+  if (fullOutput) {
+    fullOutput.textContent = output;
+    if ($("#consoleAutoScroll")?.checked) {
+      fullOutput.scrollTop = fullOutput.scrollHeight;
+    }
+  }
+  renderConsoleSummary(state.status);
 }
 
 function renderProfileForm() {
@@ -350,17 +414,23 @@ function renderIniFile(status = state.status) {
   const output = $("#iniFileContents");
   if (!output || !status) return;
   const configPath = status.paths?.config?.path || "DedicatedServer.ini";
+  const templatePath = status.paths?.configTemplate?.path || "official Linux DedicatedServer.ini template";
   setText("iniFilePath", configPath);
   if (status.paths?.config?.exists) {
     output.textContent = status.configuration?.iniText || "DedicatedServer.ini is empty.";
+  } else if (!isServerInstalled(status)) {
+    output.textContent = `DedicatedServer.ini is not available yet.\n\nInstall the Dragonwilds dedicated server first. After SteamCMD places the official config template, the setup prompt can copy and patch it for Windows.\n\nExpected Windows path:\n${configPath}`;
+  } else if (status.paths?.configTemplate?.exists) {
+    output.textContent = `Windows DedicatedServer.ini is not in place yet.\n\nSave setup to copy the official installed template and patch your required values before starting the server.\n\nWindows path:\n${configPath}\n\nOfficial template:\n${templatePath}`;
   } else {
-    output.textContent = `DedicatedServer.ini has not been created yet.\n\nExpected path:\n${configPath}\n\nComplete first-run setup to generate the file.`;
+    output.textContent = `DedicatedServer.ini was not found.\n\nRun Update or Repair so SteamCMD provides the official template, then save setup again. The app will not generate this file from scratch.\n\nExpected Windows path:\n${configPath}\n\nExpected template:\n${templatePath}`;
   }
 }
 
 function renderReleaseNotes() {
   if (state.status && !isServerInstalled(state.status)) return;
   if (state.status && isServerInstalled(state.status) && !hasServerExecutable(state.status)) return;
+  if (state.status && !isConfigReady(state.status)) return;
   const notes = state.releaseNotes?.notes || [];
   if (!notes.length) return;
   const text = notes.map((note) => `${note.heading}: ${note.body}`).join(" ");
@@ -418,6 +488,7 @@ function renderInstallMode(status) {
   const executableReady = hasServerExecutable(status);
   const savesReady = hasSaveFolder(status);
   const configReady = isConfigReady(status);
+  const setupValuesReady = hasRequiredSetupValues(status);
   $("#installGate").hidden = installed;
 
   $$("[data-show-when-missing]").forEach((element) => {
@@ -438,7 +509,7 @@ function renderInstallMode(status) {
 
   const installButtons = $$("[data-action='install']");
   installButtons.forEach((button) => {
-    button.disabled = (!configReady || taskIsActive()) && !button.hidden;
+    button.disabled = taskIsActive() && !button.hidden;
   });
 
   const help = $("#installModeHelp");
@@ -448,12 +519,14 @@ function renderInstallMode(status) {
       : "Run the initial install first. After files are detected, this page switches to update-first controls and hides repair behind extra confirmation.";
   }
 
-  if (!configReady) {
-    $("#actionHint").textContent = `Complete setup before install/start. Missing: ${configMissingText(status)}.`;
+  if (!installed) {
+    $("#actionHint").textContent = "Install the dedicated server first. Setup prompts appear after files are detected.";
+  } else if (!setupValuesReady) {
+    $("#actionHint").textContent = `Complete setup before start. Missing: ${configMissingText(status)}.`;
+  } else if (!status.paths.config.exists) {
+    $("#actionHint").textContent = "Save setup to copy and patch the official DedicatedServer.ini before starting.";
   } else if (!executableReady && installed) {
     $("#actionHint").textContent = "Files were found, but the server executable was not detected.";
-  } else if (!installed) {
-    $("#actionHint").textContent = "Install the dedicated server before starting or updating it.";
   } else {
     renderReleaseNotes();
   }
@@ -463,9 +536,10 @@ function renderSetupGate(status) {
   const gate = $("#setupGate");
   if (!gate) return;
   const ready = isConfigReady(status);
-  gate.hidden = ready;
+  const installed = isServerInstalled(status);
+  gate.hidden = !installed || ready;
   if (ready) return;
-  $("#setupMissingList").innerHTML = (status.configuration?.missingRequired || [])
+  $("#setupMissingList").innerHTML = configMissingItems(status)
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
 }
@@ -515,13 +589,15 @@ async function saveSettings() {
   state.profile = payload.profile;
   state.status = payload.status;
   renderAll();
-  if (!payload.status.configuration.ready) {
-    toast(`Setup saved. Finish required setup before install/start: ${configMissingText(payload.status)}.`);
+  if (payload.status.configuration.lastPatchError) {
+    toast(`Setup saved, but DedicatedServer.ini was not patched: ${payload.status.configuration.lastPatchError.message}`);
+  } else if (!hasRequiredSetupValues(payload.status)) {
+    toast(`Setup saved. Finish required setup before start: ${configMissingText(payload.status)}.`);
   } else {
     toast(
       payload.status.paths.config.exists
-        ? "Setup saved. DedicatedServer.ini was generated with the official Dragonwilds values."
-        : "Setup saved. DedicatedServer.ini will be generated before install/start."
+        ? "Setup saved. DedicatedServer.ini was patched using the official file/template."
+        : "Setup saved. Install the server first, then save setup again to patch the official DedicatedServer.ini."
     );
   }
 }
@@ -546,14 +622,14 @@ async function runAction(action) {
     toast("Install the Dragonwilds dedicated server before running updates.");
     return;
   }
-  if (["install", "start", "restart"].includes(action) && !isConfigReady()) {
-    setView("dashboard");
-    $("#setupForm").ownerId?.focus();
-    toast(`Complete dedicated server setup before continuing. Missing: ${configMissingText()}.`);
-    return;
-  }
   if (["start", "restart"].includes(action) && !hasServerExecutable()) {
     toast("The server executable was not detected. Run the initial install first.");
+    return;
+  }
+  if (["start", "restart"].includes(action) && !isConfigReady()) {
+    setView("dashboard");
+    $("#setupForm").elements.ownerId?.focus();
+    toast(`Complete dedicated server setup before starting. Missing: ${configMissingText()}.`);
     return;
   }
   if (action === "backup" && !hasSaveFolder()) {
@@ -643,6 +719,11 @@ function wireEvents() {
       }
     }
 
+    const openViewButton = event.target.closest("[data-open-view]");
+    if (openViewButton) {
+      setView(openViewButton.dataset.openView);
+    }
+
     const quitButton = event.target.closest("[data-console-send]");
     if (quitButton) {
       try {
@@ -722,7 +803,7 @@ function wireEvents() {
       await refreshStatus();
     }
   });
-  $("#logSearch").addEventListener("input", renderLogs);
+  $("#consoleSearch").addEventListener("input", renderLogs);
 }
 
 wireEvents();

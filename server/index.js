@@ -26,17 +26,21 @@ let activeTask = null;
 let serverProcess = null;
 let controlServer = null;
 let serverDetectionCache = null;
+let lastIniPatchError = null;
+let lastActivityLogPruneAt = 0;
 
 const serverExeCandidates = [
   "RSDragonwildsServer.exe",
   "RSDragonwilds.exe"
 ];
-const taskOutputLimit = 5000;
-const taskOutputSnapshotLimit = 1200;
-const activityLogSnapshotLimit = 1800;
-const serverLogSnapshotLimit = 1500;
+const taskOutputLimit = 12000;
+const taskOutputSnapshotLimit = 4000;
+const activityLogSnapshotLimit = 8000;
+const serverLogSnapshotLimit = 5000;
+const logRetentionHours = 72;
+const logRetentionMs = logRetentionHours * 60 * 60 * 1000;
+const activityLogPruneIntervalMs = 5 * 60 * 1000;
 const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
-const dedicatedServerMetadata = ";METADATA=(Diff=true, UseCommands=true)";
 const dedicatedConfigFields = [
   { field: "ownerId", label: "Owner ID", key: "OwnerId", required: true },
   { field: "name", label: "Server Name", key: "ServerName", required: true },
@@ -184,6 +188,28 @@ async function readDedicatedServerIniText(configPath) {
   }
 }
 
+function dedicatedConfigTemplateCandidates(profile) {
+  return [
+    path.join(profile.paths.serverDir, "RSDragonwilds", "Saved", "Config", "Linux", "DedicatedServer.ini"),
+    path.join(profile.paths.serverDir, "RSDragonwilds", "Saved", "Config", "LinuxServer", "DedicatedServer.ini")
+  ];
+}
+
+function getDedicatedConfigTemplateStatus(profile) {
+  const candidates = dedicatedConfigTemplateCandidates(profile);
+  const existing = candidates.find((candidate) => exists(candidate));
+  return {
+    path: existing || candidates[0],
+    exists: Boolean(existing),
+    candidates
+  };
+}
+
+function hasIniSection(lines, section) {
+  const sectionPattern = new RegExp(`^\\s*\\[${escapeRegExp(section)}\\]\\s*$`, "i");
+  return lines.some((line) => sectionPattern.test(line));
+}
+
 async function hydrateProfileFromIni(profile) {
   const next = normalizeProfile(profile);
   const iniValues = await readDedicatedServerIniValues(next.paths.configPath);
@@ -208,8 +234,20 @@ async function saveProfile(profile) {
   serverDetectionCache = null;
   const config = getDedicatedConfigStatus(next);
   if (next.writeIniOnSave && config.ready) {
-    await writeDedicatedServerIni(next);
+    const install = await detectServerInstall(next);
+    if (install.installed) {
+      try {
+        await patchDedicatedServerIni(next, { allowTemplateCopy: true });
+      } catch (error) {
+        lastIniPatchError = { message: error.message, at: timestamp() };
+        appendActivity(`Settings saved, but DedicatedServer.ini was not patched: ${error.message}`);
+      }
+    } else {
+      lastIniPatchError = null;
+      appendActivity("Settings saved. Install the dedicated server before patching DedicatedServer.ini.");
+    }
   } else if (next.writeIniOnSave) {
+    lastIniPatchError = null;
     appendActivity(
       `Settings saved to profile. DedicatedServer.ini was not written because setup is incomplete: ${config.missingRequired.join(", ")}.`
     );
@@ -276,29 +314,60 @@ function iniValuesFromProfile(profile) {
   return mapped;
 }
 
-async function writeDedicatedServerIni(profile) {
+async function ensureDedicatedServerIniForPatch(profile, options = {}) {
   const configPath = profile.paths.configPath;
-  await fsp.mkdir(path.dirname(configPath), { recursive: true });
-  let lines = [];
-  try {
-    lines = (await fsp.readFile(configPath, "utf8")).split(/\r?\n/);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    lines = [
-      dedicatedServerMetadata,
-      `[${dedicatedServerSection}]`
-    ];
+  if (exists(configPath)) {
+    return { path: configPath, source: "windows" };
   }
 
-  if (!lines.some((line) => line.trim() === dedicatedServerMetadata)) {
-    lines.unshift(dedicatedServerMetadata);
+  if (!options.allowTemplateCopy) {
+    throw new Error(`DedicatedServer.ini was not found at ${configPath}. Install the server first, then save setup.`);
+  }
+
+  const template = getDedicatedConfigTemplateStatus(profile);
+  if (!template.exists) {
+    throw new Error(
+      `DedicatedServer.ini was not found. Install or update the server first, then save setup again. Expected Windows config at ${configPath} or official Linux template at ${template.path}.`
+    );
+  }
+
+  const templateText = await fsp.readFile(template.path, "utf8");
+  const templateLines = templateText.split(/\r?\n/);
+  if (!hasIniSection(templateLines, dedicatedServerSection)) {
+    throw new Error(
+      `The official template at ${template.path} does not contain [${dedicatedServerSection}], so the app refused to create a Windows config from it.`
+    );
+  }
+
+  await fsp.mkdir(path.dirname(configPath), { recursive: true });
+  await fsp.copyFile(template.path, configPath);
+  appendActivity(`Copied official DedicatedServer.ini template from ${template.path} to ${configPath}.`);
+  return { path: configPath, source: "template", copiedFrom: template.path };
+}
+
+async function patchDedicatedServerIni(profile, options = {}) {
+  const configPath = profile.paths.configPath;
+  await ensureDedicatedServerIniForPatch(profile, options);
+  let lines = (await fsp.readFile(configPath, "utf8")).split(/\r?\n/);
+
+  const sections = new Set();
+  for (const line of lines) {
+    const match = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (match) sections.add(match[1].trim().toLowerCase());
   }
 
   for (const entry of iniValuesFromProfile(profile)) {
+    if (!sections.has(entry.section.toLowerCase())) {
+      throw new Error(
+        `DedicatedServer.ini does not contain [${entry.section}], so the app refused to create that section.`
+      );
+    }
     lines = upsertIniValue(lines, entry.section, entry.key, entry.value);
   }
 
   await fsp.writeFile(configPath, `${lines.join(os.EOL).replace(/\s+$/g, "")}${os.EOL}`, "utf8");
+  lastIniPatchError = null;
+  appendActivity(`Patched DedicatedServer.ini using the official file at ${configPath}.`);
 }
 
 function upsertIniValue(lines, section, key, value) {
@@ -464,10 +533,49 @@ async function detectServerInstall(profile) {
   return result;
 }
 
-async function readLastLines(filePath, lineCount = 300) {
+function parseLogTimestamp(line) {
+  const match = String(line || "").match(/^\[([^\]]+)\]/);
+  if (!match) return null;
+  const time = Date.parse(match[1]);
+  return Number.isFinite(time) ? time : null;
+}
+
+function filterLinesByAge(lines, maxAgeMs, keepUndated = true) {
+  if (!maxAgeMs) return lines;
+  const cutoff = Date.now() - maxAgeMs;
+  return lines.filter((line) => {
+    const time = parseLogTimestamp(line);
+    if (time === null) return keepUndated;
+    return time >= cutoff;
+  });
+}
+
+function pruneActivityLogIfNeeded(force = false) {
+  const now = Date.now();
+  if (!force && now - lastActivityLogPruneAt < activityLogPruneIntervalMs) return;
+  lastActivityLogPruneAt = now;
+  if (!exists(activityLogPath)) return;
+
+  try {
+    const text = fs.readFileSync(activityLogPath, "utf8");
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const retained = filterLinesByAge(lines, logRetentionMs, true);
+    if (retained.length !== lines.length) {
+      fs.writeFileSync(activityLogPath, `${retained.join(os.EOL)}${retained.length ? os.EOL : ""}`, "utf8");
+    }
+  } catch (error) {
+    console.warn(`Could not prune activity log: ${error.message}`);
+  }
+}
+
+async function readLastLines(filePath, lineCount = 300, options = {}) {
   try {
     const text = await fsp.readFile(filePath, "utf8");
-    const lines = text.split(/\r?\n/).filter(Boolean);
+    const lines = filterLinesByAge(
+      text.split(/\r?\n/).filter(Boolean),
+      options.maxAgeMs,
+      options.keepUndated !== false
+    );
     return lines.slice(-Number(lineCount || 300));
   } catch (error) {
     if (error.code === "ENOENT") return [];
@@ -479,6 +587,7 @@ function appendActivity(line) {
   const formatted = `[${timestamp()}] ${line.replace(/\r?\n/g, os.EOL)}`;
   fs.mkdirSync(dataDir, { recursive: true });
   fs.appendFileSync(activityLogPath, `${formatted}${os.EOL}`, "utf8");
+  pruneActivityLogIfNeeded();
 }
 
 function splitArgs(argsText) {
@@ -496,6 +605,7 @@ function taskSnapshot() {
     startedAt: activeTask.startedAt,
     finishedAt: activeTask.finishedAt,
     exitCode: activeTask.exitCode,
+    externalWindow: Boolean(activeTask.externalWindow),
     canReceiveInput:
       ["running", "stopping"].includes(activeTask.status) &&
       Boolean(activeTask.child?.stdin && !activeTask.child.stdin.destroyed),
@@ -542,15 +652,17 @@ function beginTask(name, command, args, options = {}) {
     exitCode: null,
     output: [],
     outputBuffer: "",
-    child: null
+    child: null,
+    externalWindow: process.platform === "win32" && options.showWindow !== false
   };
   activeTask = task;
-  appendActivity(`Task started: ${name}`);
+  appendActivity(`Task started: ${name}${task.externalWindow ? " (external command window requested)" : ""}`);
 
+  const { showWindow, ...spawnOptions } = options;
   const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-    ...options
+    windowsHide: process.platform === "win32" ? !task.externalWindow : true,
+    ...spawnOptions
   });
   task.child = child;
 
@@ -640,13 +752,6 @@ function steamcmdString(value) {
 }
 
 async function runInstall(profile, validate) {
-  if (validate) {
-    assertDedicatedConfigReady(profile, "installing or repairing the server");
-    await writeDedicatedServerIni(profile);
-  } else if (getDedicatedConfigStatus(profile).ready) {
-    await writeDedicatedServerIni(profile);
-  }
-
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
   const steamcmdZip = path.join(os.tmpdir(), "steamcmd.zip");
   const scriptName = validate ? "steamcmd-install-validate.txt" : "steamcmd-update.txt";
@@ -696,7 +801,7 @@ async function startGameServer(profile) {
   }
 
   const args = splitArgs(profile.server.launchArgs);
-  await writeDedicatedServerIni(profile);
+  await patchDedicatedServerIni(profile, { allowTemplateCopy: true });
 
   appendActivity(`Starting server: ${install.serverExe} ${args.join(" ")}`);
   serverProcess = spawn(install.serverExe, args, {
@@ -823,10 +928,13 @@ async function getStatus() {
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
   const install = await detectServerInstall(profile);
   const backups = await listBackups(profile);
-  const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit);
-  const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit);
+  pruneActivityLogIfNeeded();
+  const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit, { maxAgeMs: logRetentionMs });
+  const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit, { maxAgeMs: logRetentionMs });
   const tcpPortOpen = await checkTcpPort(profile.server.port);
   const configuration = getDedicatedConfigStatus(profile);
+  const configExists = exists(profile.paths.configPath);
+  const configTemplate = getDedicatedConfigTemplateStatus(profile);
   const configText = await readDedicatedServerIniText(profile.paths.configPath);
 
   return {
@@ -837,8 +945,12 @@ async function getStatus() {
     task: taskSnapshot(),
     selectedPort: Number(profile.server.port),
     tcpPortOpen,
+    logRetentionHours,
     configuration: {
       ...configuration,
+      iniReady: configuration.ready && configExists,
+      templateAvailable: configTemplate.exists,
+      lastPatchError: lastIniPatchError,
       iniText: configText
     },
     paths: {
@@ -851,7 +963,8 @@ async function getStatus() {
         expectedExecutables: install.expectedExecutables
       },
       serverExe: { path: install.serverExe, exists: Boolean(install.serverExe) },
-      config: { path: profile.paths.configPath, exists: exists(profile.paths.configPath) },
+      config: { path: profile.paths.configPath, exists: configExists },
+      configTemplate,
       saves: { path: profile.paths.saveDir, exists: exists(profile.paths.saveDir) },
       log: { path: profile.paths.logPath, exists: exists(profile.paths.logPath) },
       backups: { path: profile.paths.backupDir, exists: exists(profile.paths.backupDir) }
@@ -1001,10 +1114,13 @@ async function handleApi(request, response, url) {
 
     if (request.method === "GET" && url.pathname === "/api/logs") {
       const profile = await getProfile();
-      const count = Math.min(Number(url.searchParams.get("lines") || 1200), 5000);
+      const count = Math.min(Number(url.searchParams.get("lines") || 5000), 12000);
+      pruneActivityLogIfNeeded();
       sendJson(response, 200, {
-        logLines: await readLastLines(profile.paths.logPath, count),
-        activityLines: await readLastLines(activityLogPath, count)
+        logRetentionHours,
+        task: taskSnapshot(),
+        logLines: await readLastLines(profile.paths.logPath, count, { maxAgeMs: logRetentionMs }),
+        activityLines: await readLastLines(activityLogPath, count, { maxAgeMs: logRetentionMs })
       });
       return;
     }

@@ -1,19 +1,19 @@
 {
-  "version": "0.4.1",
-  "title": "Simplified config surface",
-  "date": "2026-07-06",
+  "version": "0.5.0",
+  "title": "Dedicated console workspace",
+  "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Settings page removed for now",
-      "body": "The unfinished Settings page has been removed from the sidebar so the app stays focused on the parts that are ready to use."
+      "heading": "Console gets its own tab",
+      "body": "Live task output, server logs, and control activity now have a dedicated Console tab with search, auto-scroll, command input, and more room to breathe."
     },
     {
-      "heading": "Dashboard shows DedicatedServer.ini",
-      "body": "The Server Configuration panel now shows the current DedicatedServer.ini contents directly, giving admins a simple read-only view while richer editing is built later."
+      "heading": "Command windows are visible",
+      "body": "Install, update, repair, backup, restore, and stop tasks now request a visible Windows command window while still mirroring output back into the app."
     },
     {
-      "heading": "First-run setup still works",
-      "body": "Required first-install fields now live in the setup prompt, so new servers can still generate the official config file before install or start."
+      "heading": "72-hour log retention",
+      "body": "The control app prunes its own activity log to the last 72 hours and only shows recent retained output so logs do not grow forever."
     }
   ]
 }

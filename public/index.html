@@ -23,6 +23,9 @@
       <symbol id="icon-logs" viewBox="0 0 24 24">
         <path d="M5 3h14v18H5zM8 7h8v2H8zm0 4h8v2H8zm0 4h5v2H8z"></path>
       </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24">
+        <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3 4-1.4 1.4L8.2 12l-2.6 2.6L7 16l4-4zm5 7v2h6v-2z"></path>
+      </symbol>
       <symbol id="icon-deploy" viewBox="0 0 24 24">
         <path d="M12 2 4 6v6c0 5 3.3 8.6 8 10 4.7-1.4 8-5 8-10V6zm0 4 4 4h-3v6h-2v-6H8z"></path>
       </symbol>
@@ -79,9 +82,9 @@
             <span class="nav-icon"><svg class="icon"><use href="#icon-backup"></use></svg></span>
             <span>Backups</span>
           </button>
-          <button class="nav-item" data-view="logs">
-            <span class="nav-icon"><svg class="icon"><use href="#icon-logs"></use></svg></span>
-            <span>Logs</span>
+          <button class="nav-item" data-view="console">
+            <span class="nav-icon"><svg class="icon"><use href="#icon-terminal"></use></svg></span>
+            <span>Console</span>
           </button>
           <button class="nav-item" data-view="deploy">
             <span class="nav-icon"><svg class="icon"><use href="#icon-deploy"></use></svg></span>
@@ -92,7 +95,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.4.1</strong>
+            <strong id="appVersion">0.5.0</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -147,7 +150,7 @@
             <div class="gate-icon"><svg class="icon"><use href="#icon-shield"></use></svg></div>
             <div>
               <strong>Dedicated server setup is required</strong>
-              <p>Dragonwilds will not start until the official Owner ID, Server Name, Default World Name, and Admin Password are written to DedicatedServer.ini.</p>
+              <p>Dragonwilds will not start until the installed official DedicatedServer.ini is copied into the WindowsServer folder and patched with your Owner ID, Server Name, Default World Name, and Admin Password.</p>
               <ul class="setup-list" id="setupMissingList"></ul>
             </div>
             <form class="setup-form" id="setupForm">
@@ -187,7 +190,7 @@
             <div class="gate-icon"><svg class="icon"><use href="#icon-shield"></use></svg></div>
             <div>
               <strong>Dragonwilds server files are not installed yet</strong>
-              <p>Run the initial SteamCMD install first. Start, update, and backup controls unlock after the server files are detected.</p>
+              <p>Run the initial SteamCMD install first. After server files are detected, setup will unlock so the official DedicatedServer.ini can be patched before start.</p>
             </div>
             <button class="action-button success" data-action="install" data-show-when-missing>
               <svg class="button-icon" aria-hidden="true"><use href="#icon-install"></use></svg>
@@ -254,28 +257,12 @@
             <pre class="ini-output" id="iniFileContents">Loading DedicatedServer.ini...</pre>
           </section>
 
-          <section class="panel logs-panel">
+          <section class="panel console-summary-panel">
             <div class="panel-heading compact">
-              <h2>Server Logs</h2>
-              <div class="log-tools">
-                <label class="inline-check">
-                  <input id="autoScroll" type="checkbox" checked>
-                  Auto scroll
-                </label>
-                <input id="logSearch" class="search-input" placeholder="Search logs...">
-              </div>
+              <h2>Console</h2>
+              <button class="ghost-button" type="button" data-open-view="console">Open Console</button>
             </div>
-            <form class="console-form" data-console-form>
-              <input class="console-input" name="command" autocomplete="off" placeholder="Type console input for the running install/update task...">
-              <button class="ghost-button" type="submit">
-                <svg class="button-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
-                Send
-              </button>
-              <button class="ghost-button" type="button" data-console-send="quit">Send Quit</button>
-              <button class="ghost-button danger-text" type="button" data-stop-task>Stop Task</button>
-              <span class="console-state" data-console-state>No running console task</span>
-            </form>
-            <pre id="logOutput" class="log-output"></pre>
+            <div class="console-summary" id="consoleSummary"></div>
           </section>
         </div>
 
@@ -340,14 +327,20 @@
           </section>
         </div>
 
-        <div class="view" id="logsView">
-          <section class="panel full-panel tall-panel">
+        <div class="view" id="consoleView">
+          <section class="panel full-panel tall-panel console-panel">
             <div class="panel-heading compact">
-              <h2>Logs</h2>
+              <h2>Console</h2>
               <div class="log-tools">
-                <button class="ghost-button" id="refreshLogs">Refresh Logs</button>
+                <label class="inline-check">
+                  <input id="consoleAutoScroll" type="checkbox" checked>
+                  Auto scroll
+                </label>
+                <input id="consoleSearch" class="search-input" placeholder="Search console...">
+                <button class="ghost-button" id="refreshLogs">Refresh</button>
               </div>
             </div>
+            <div class="console-meta" id="consoleMeta"></div>
             <form class="console-form" data-console-form>
               <input class="console-input" name="command" autocomplete="off" placeholder="Type console input for the running install/update task...">
               <button class="ghost-button" type="submit">
@@ -358,7 +351,7 @@
               <button class="ghost-button danger-text" type="button" data-stop-task>Stop Task</button>
               <span class="console-state" data-console-state>No running console task</span>
             </form>
-            <pre id="fullLogOutput" class="log-output large"></pre>
+            <pre id="fullLogOutput" class="log-output large console-output"></pre>
           </section>
         </div>
 

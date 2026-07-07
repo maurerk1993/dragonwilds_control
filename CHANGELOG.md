@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 - Dedicated console workspace
+
+- Added a dedicated Console tab with a larger live output view for active task output, server log lines, and control activity.
+- Replaced the cramped dashboard log terminal with a compact console summary card and an Open Console action.
+- Changed long-running task launches so Windows command windows are no longer hidden while the app still mirrors output into the Console tab.
+- Added 72-hour retention for the app control activity log and filtered status/API log output to recent retained lines.
+- Kept the safer official `DedicatedServer.ini` setup workflow from `0.4.2`: install first, then patch an existing Windows config or copied official Linux template before start.
+
+## 0.4.2 - Safer official INI setup
+
+- Changed first-run flow so the SteamCMD server install can run before required Dragonwilds setup values are entered.
+- Changed `DedicatedServer.ini` handling so the app patches an existing Windows config or copies the installed official Linux template first instead of generating the file from scratch.
+- Added config-template status to health checks and paths so admins can see whether the installed official template is available.
+- Updated Start and Restart gating so the server cannot launch until required setup values are saved and the Windows `DedicatedServer.ini` is ready.
+- Updated smoke coverage to confirm the app refuses to fabricate `DedicatedServer.ini` without an official template and preserves unknown official INI fields while patching known values.
+
 ## 0.4.1 - Simplified config surface
 
 - Removed the unfinished Settings page from the sidebar while the configuration workflow is still being shaped.

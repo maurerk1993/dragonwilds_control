@@ -494,13 +494,13 @@ button:disabled {
   grid-row: span 2;
 }
 
-.logs-panel {
+.console-summary-panel {
   grid-column: 1 / -1;
 }
 
 .actions-panel .action-grid,
 .settings-panel .ini-output,
-.logs-panel .log-output,
+.console-panel .log-output,
 .tall-panel .log-output {
   flex: 1 1 auto;
 }
@@ -727,6 +727,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .console-form {
@@ -757,6 +758,50 @@ button:disabled {
   font-size: 12px;
   line-height: 1.25;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-summary,
+.console-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  padding: 14px 16px;
+  background: rgba(12, 15, 14, 0.92);
+}
+
+.console-summary {
+  color: var(--text);
+}
+
+.console-meta {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.console-stat {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(212, 173, 89, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.console-stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.console-stat strong {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -797,6 +842,10 @@ button:disabled {
 .log-output.large {
   min-height: 0;
   max-height: none;
+}
+
+.console-output {
+  min-height: 520px;
 }
 
 .full-panel {
@@ -932,12 +981,12 @@ button:disabled {
   .health-panel,
   .actions-panel,
   .settings-panel,
-  .logs-panel {
+  .console-summary-panel {
     grid-column: auto;
     grid-row: auto;
   }
 
-  .logs-panel {
+  .console-summary-panel {
     grid-column: 1 / -1;
   }
 }
@@ -952,18 +1001,24 @@ button:disabled {
   .actions-panel,
   .settings-panel,
   .health-panel,
-  .backup-panel {
+  .backup-panel,
+  .console-summary-panel {
     grid-column: auto;
     grid-row: auto;
   }
 
-  .logs-panel {
+  .console-summary-panel {
     grid-column: 1 / -1;
   }
 
   .log-output {
     min-height: 220px;
     max-height: 340px;
+  }
+
+  .console-panel .log-output {
+    min-height: 520px;
+    max-height: none;
   }
 }
 
