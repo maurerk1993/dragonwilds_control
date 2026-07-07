@@ -95,7 +95,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.5.0</strong>
+            <strong id="appVersion">0.5.1</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -126,9 +126,9 @@
             <small id="serverPath">C:\GameServers\RSDragonwildsDedicatedServer</small>
           </div>
           <div class="top-stat port-stat">
-            <span class="label">Selected Port</span>
+            <span class="label">Game Port</span>
             <strong id="selectedPort">7777</strong>
-            <small id="portProbe">UDP host setting</small>
+            <small id="portProbe">Secondary 7778</small>
           </div>
           <div class="top-stat">
             <span class="label">Players</span>
@@ -175,8 +175,9 @@
                 <input name="worldPassword" type="password" autocomplete="new-password">
               </label>
               <label>
-                <span>Server Port</span>
-                <input name="port" type="number" min="1" max="65535">
+                <span>Game Port</span>
+                <input name="port" type="number" min="1" max="65534">
+                <small class="field-hint">Defaults to 7777. Dragonwilds also uses the next port as Secondary Port, so forward UDP for both.</small>
               </label>
               <div class="setup-actions">
                 <button class="action-button success" id="saveSetupGate" type="submit">

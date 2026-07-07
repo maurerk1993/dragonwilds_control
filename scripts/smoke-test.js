@@ -80,8 +80,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.0") {
-    throw new Error(`Expected version 0.5.0, got ${app.version}`);
+  if (app.version !== "0.5.1") {
+    throw new Error(`Expected version 0.5.1, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
@@ -107,6 +107,7 @@ async function main() {
   await fs.mkdir(path.join(testServerDir, "steamapps"), { recursive: true });
   await fs.writeFile(path.join(testServerDir, "steamapps", "appmanifest_4019830.acf"), '"appid" "4019830"');
   profile.server.port = 28888;
+  profile.server.launchArgs = "-log -NewConsole -port=7777";
   profile.server.ownerId = "0002ff274ad9459abebf9ca7f3bed3cb";
   profile.server.name = "Smoke Test Dragonwilds Server";
   profile.server.worldName = "SmokeWorld";
@@ -119,6 +120,21 @@ async function main() {
   profile.paths.saveDir = path.join(testServerDir, "RSDragonwilds", "Saved", "Savegames");
   profile.paths.logPath = path.join(testServerDir, "RSDragonwilds", "Saved", "Logs", "RSDragonwilds.log");
   profile.paths.backupDir = path.join(testServerDir, "Backups");
+
+  for (const invalidPort of [65535, "not-a-number"]) {
+    const invalidProfile = JSON.parse(JSON.stringify(profile));
+    invalidProfile.server.port = invalidPort;
+    let rejected = false;
+    try {
+      await requestJson("/api/settings", "PUT", invalidProfile);
+    } catch (error) {
+      rejected = /Game Port must be a whole number from 1 to 65534/.test(error.message);
+    }
+    if (!rejected) {
+      throw new Error(`Invalid game port was not rejected: ${invalidPort}`);
+    }
+  }
+
   const savedWithoutTemplate = await requestJson("/api/settings", "PUT", profile);
   try {
     await fs.access(configPath);
@@ -151,6 +167,9 @@ async function main() {
   const saved = await requestJson("/api/settings", "PUT", profile);
   if (saved.profile.server.port !== 28888) {
     throw new Error("Settings save did not persist the server port.");
+  }
+  if (saved.profile.server.queryPort !== 28889) {
+    throw new Error(`Settings save did not derive the secondary port: ${saved.profile.server.queryPort}`);
   }
   if (!saved.status.configuration.ready) {
     throw new Error(`Saved profile should be config-ready: ${saved.status.configuration.missingRequired.join(", ")}`);
@@ -201,6 +220,19 @@ async function main() {
   if (status.selectedPort !== 28888) {
     throw new Error("Status did not report the saved server port.");
   }
+  if (status.secondaryPort !== 28889 || status.queryPort !== 28889) {
+    throw new Error(`Status did not derive the secondary port: ${status.secondaryPort}/${status.queryPort}`);
+  }
+  if (!status.effectiveLaunchArgsText?.includes("-port=28888")) {
+    throw new Error(`Status did not include the effective launch port: ${status.effectiveLaunchArgsText}`);
+  }
+  if (status.effectiveLaunchArgsText.includes("-port=7777")) {
+    throw new Error(`Status kept a stale custom launch port: ${status.effectiveLaunchArgsText}`);
+  }
+  const portArgCount = (status.effectiveLaunchArgs || []).filter((arg) => arg.toLowerCase().startsWith("-port")).length;
+  if (portArgCount !== 1) {
+    throw new Error(`Expected exactly one effective -port argument, got ${portArgCount}.`);
+  }
   if (!status.configuration.ready || !status.configuration.iniReady || !status.paths.config.exists) {
     throw new Error("Status did not report a ready patched DedicatedServer.ini.");
   }
@@ -235,6 +267,9 @@ async function main() {
   }
   if (!page.includes("data-console-form") || !page.includes("icon-restart") || !page.includes("iniFileContents")) {
     throw new Error("Dashboard HTML is missing console form, SVG icon, or INI viewer markup.");
+  }
+  if (!page.includes("Game Port") || !page.includes("Secondary Port") || !page.includes('max="65534"')) {
+    throw new Error("Dashboard HTML is missing Game Port or Secondary Port setup guidance.");
   }
   if (page.includes('id="logOutput"') || page.includes('data-view="logs"')) {
     throw new Error("Old dashboard log terminal or Logs nav markup should not be present.");

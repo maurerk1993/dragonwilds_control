@@ -1,19 +1,19 @@
 {
-  "version": "0.5.0",
-  "title": "Dedicated console workspace",
+  "version": "0.5.1",
+  "title": "Game port launch control",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Console gets its own tab",
-      "body": "Live task output, server logs, and control activity now have a dedicated Console tab with search, auto-scroll, command input, and more room to breathe."
+      "heading": "Game Port now controls launch",
+      "body": "The setup Game Port is now passed to Dragonwilds as the documented -port value, so changing it actually changes the port used when the server starts."
     },
     {
-      "heading": "Command windows are visible",
-      "body": "Install, update, repair, backup, restore, and stop tasks now request a visible Windows command window while still mirroring output back into the app."
+      "heading": "Secondary Port is clearer",
+      "body": "The app now derives and shows the Secondary Port as Game Port + 1, making it easier to know which two UDP ports need forwarding."
     },
     {
-      "heading": "72-hour log retention",
-      "body": "The control app prunes its own activity log to the last 72 hours and only shows recent retained output so logs do not grow forever."
+      "heading": "Safer custom launch args",
+      "body": "Any stale custom -port value is replaced with the saved Game Port, while other launch flags like -log and -NewConsole are preserved."
     }
   ]
 }

@@ -41,6 +41,9 @@ const logRetentionHours = 72;
 const logRetentionMs = logRetentionHours * 60 * 60 * 1000;
 const activityLogPruneIntervalMs = 5 * 60 * 1000;
 const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
+const defaultGamePort = 7777;
+const minGamePort = 1;
+const maxGamePort = 65534;
 const dedicatedConfigFields = [
   { field: "ownerId", label: "Owner ID", key: "OwnerId", required: true },
   { field: "name", label: "Server Name", key: "ServerName", required: true },
@@ -68,8 +71,8 @@ const defaultProfile = {
     adminPassword: "",
     worldPassword: "",
     maxPlayers: 4,
-    port: 7777,
-    queryPort: 7778,
+    port: defaultGamePort,
+    queryPort: defaultGamePort + 1,
     publicServer: false,
     worldName: "Ashenfall",
     autoSaveMinutes: 15,
@@ -115,6 +118,31 @@ function deepMerge(base, override) {
   return merged;
 }
 
+function parseGamePort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) ? port : null;
+}
+
+function gamePortValidationMessage() {
+  return `Game Port must be a whole number from ${minGamePort} to ${maxGamePort}. Dragonwilds also uses the next port as the Secondary Port.`;
+}
+
+function assertValidGamePort(value) {
+  const port = parseGamePort(value);
+  if (port === null || port < minGamePort || port > maxGamePort) {
+    throw new Error(gamePortValidationMessage());
+  }
+  return port;
+}
+
+function normalizeGamePort(value) {
+  const port = parseGamePort(value);
+  if (port === null || port < minGamePort || port > maxGamePort) {
+    return defaultGamePort;
+  }
+  return port;
+}
+
 async function ensureDataDir() {
   await fsp.mkdir(dataDir, { recursive: true });
 }
@@ -135,10 +163,14 @@ async function writeJson(filePath, value) {
 
 function normalizeProfile(profile) {
   const next = deepMerge(defaultProfile, profile || {});
+  const gamePort = normalizeGamePort(next.server.port);
   if (!next.server.worldPassword && next.server.password) {
     next.server.worldPassword = next.server.password;
   }
   next.server.password = next.server.worldPassword || "";
+  next.server.port = gamePort;
+  next.server.queryPort = gamePort + 1;
+  next.server.launchArgs = String(next.server.launchArgs || "").trim() || defaultProfile.server.launchArgs;
   next.iniMappings = { ...defaultProfile.iniMappings };
   next.customIniValues = Array.isArray(next.customIniValues) ? next.customIniValues : [];
   return next;
@@ -229,6 +261,7 @@ async function getProfile() {
 }
 
 async function saveProfile(profile) {
+  assertValidGamePort(profile?.server?.port ?? defaultProfile.server.port);
   const next = normalizeProfile(profile);
   await writeJson(profilePath, next);
   serverDetectionCache = null;
@@ -596,6 +629,40 @@ function splitArgs(argsText) {
   return matches.map((value) => value.replace(/^"|"$/g, ""));
 }
 
+function getSecondaryPort(gamePort) {
+  return assertValidGamePort(gamePort) + 1;
+}
+
+function getEffectiveLaunchArgs(profile) {
+  const gamePort = assertValidGamePort(profile.server.port);
+  const args = splitArgs(profile.server.launchArgs);
+  const filteredArgs = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const lowerArg = arg.toLowerCase();
+    if (lowerArg === "-port") {
+      index += 1;
+      continue;
+    }
+    if (lowerArg.startsWith("-port=")) {
+      continue;
+    }
+    filteredArgs.push(arg);
+  }
+
+  return [...filteredArgs, `-port=${gamePort}`];
+}
+
+function formatLaunchArgsForDisplay(args) {
+  return args
+    .map((arg) => {
+      const text = String(arg);
+      return /\s/.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text;
+    })
+    .join(" ");
+}
+
 function taskSnapshot() {
   if (!activeTask) return null;
   return {
@@ -800,10 +867,10 @@ async function startGameServer(profile) {
     throw new Error("The Dragonwilds dedicated server is not installed yet. Run the initial install first.");
   }
 
-  const args = splitArgs(profile.server.launchArgs);
+  const args = getEffectiveLaunchArgs(profile);
   await patchDedicatedServerIni(profile, { allowTemplateCopy: true });
 
-  appendActivity(`Starting server: ${install.serverExe} ${args.join(" ")}`);
+  appendActivity(`Starting server: ${install.serverExe} ${formatLaunchArgsForDisplay(args)}`);
   serverProcess = spawn(install.serverExe, args, {
     cwd: path.dirname(install.serverExe),
     windowsHide: false
@@ -936,6 +1003,9 @@ async function getStatus() {
   const configExists = exists(profile.paths.configPath);
   const configTemplate = getDedicatedConfigTemplateStatus(profile);
   const configText = await readDedicatedServerIniText(profile.paths.configPath);
+  const selectedPort = assertValidGamePort(profile.server.port);
+  const secondaryPort = getSecondaryPort(selectedPort);
+  const effectiveLaunchArgs = getEffectiveLaunchArgs(profile);
 
   return {
     appVersion: appPackage.version,
@@ -943,7 +1013,11 @@ async function getStatus() {
     serverRunning: Boolean(serverProcess && !serverProcess.killed),
     serverPid: serverProcess?.pid || null,
     task: taskSnapshot(),
-    selectedPort: Number(profile.server.port),
+    selectedPort,
+    secondaryPort,
+    queryPort: secondaryPort,
+    effectiveLaunchArgs,
+    effectiveLaunchArgsText: formatLaunchArgsForDisplay(effectiveLaunchArgs),
     tcpPortOpen,
     logRetentionHours,
     configuration: {

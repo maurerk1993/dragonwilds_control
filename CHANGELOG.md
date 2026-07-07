@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1 - Game port launch control
+
+- Changed server start so the saved Game Port is passed to Dragonwilds as `-port=<port>`.
+- Replaced stale custom `-port` launch args with the saved Game Port while preserving other custom launch flags.
+- Added Secondary Port status and setup guidance so admins know to forward UDP for the Game Port and the next port.
+- Added validation so Game Port must be a whole number from `1` to `65534`.
+
 ## 0.5.0 - Dedicated console workspace
 
 - Added a dedicated Console tab with a larger live output view for active task output, server log lines, and control activity.

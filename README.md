@@ -11,7 +11,7 @@ This app is based on the existing batch-file workflow:
 - Config path: `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`
 - Save path: `RSDragonwilds\Saved\Savegames`
 - Log path: `RSDragonwilds\Saved\Logs\RSDragonwilds.log`
-- Default server port: `7777`
+- Default Game Port: `7777`
 
 ## Build The Windows Installer
 
@@ -31,8 +31,11 @@ On a fresh machine, run the initial server install first. After server files are
 - Default World Name
 - Admin Password
 - Optional World Password
+- Game Port, which defaults to `7777`
 
 The app patches those values into the official `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini` file. If the Windows file is missing, it first copies the installed official Linux template from `RSDragonwilds\Saved\Config\Linux\DedicatedServer.ini` and then patches the `/Script/Dominion.DedicatedServerSettings` section.
+
+Dragonwilds also uses the next port as its Secondary Port. If the Game Port is `7777`, the Secondary Port is `7778`. The app launches the server with `-port=<Game Port>` and shows both values so you can forward UDP for both ports in Windows Firewall, your router, and any host/ISP firewall.
 
 For MSI packaging:
 
@@ -71,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
 
 ## DedicatedServer.ini Configuration
 
-The app writes a local JSON profile and updates `DedicatedServer.ini` only after the server files are installed and the required official values are present. The server port is entered during setup and defaults to `7777`.
+The app writes a local JSON profile and updates `DedicatedServer.ini` only after the server files are installed and the required official values are present. The Game Port is entered during setup and defaults to `7777`; the app passes it to Dragonwilds as `-port=<Game Port>` and derives Secondary Port as `Game Port + 1`.
 
 Dragonwilds requires the Windows dedicated server config at `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`. The app does not generate this file from scratch. It patches an existing Windows config, or copies the installed official Linux template from `RSDragonwilds\Saved\Config\Linux\DedicatedServer.ini` into `WindowsServer` before patching `OwnerId`, `ServerName`, `DefaultWorldName`, `AdminPassword`, and optional `WorldPassword`. Stop the server before changing these values because Dragonwilds documentation warns that changes made while the server is running can be lost.
 
@@ -105,4 +108,4 @@ See [docs/app-update-options.md](docs/app-update-options.md). The packaged app c
 npm test
 ```
 
-The smoke test starts the local dashboard on a test port, verifies the API, saves a test port and required dedicated-server setup values, confirms `DedicatedServer.ini` is not fabricated without an official template, confirms the installed template is copied and patched, and confirms the dashboard HTML loads.
+The smoke test starts the local dashboard on a test port, verifies the API, saves a test Game Port and required dedicated-server setup values, confirms the effective launch args include the selected `-port`, confirms `DedicatedServer.ini` is not fabricated without an official template, confirms the installed template is copied and patched, and confirms the dashboard HTML loads.

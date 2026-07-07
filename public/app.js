@@ -166,7 +166,10 @@ function renderStatus() {
   setText("steamPath", status.paths.steamcmd.path);
   setText("serverFileStatus", executableReady ? "READY" : installed ? "FILES FOUND" : "NOT INSTALLED");
   setText("serverPath", status.paths.serverExe.path || status.paths.serverDir.path);
-  setText("portProbe", status.tcpPortOpen ? "TCP probe open" : "UDP setting; TCP closed");
+  setText(
+    "portProbe",
+    `Secondary ${status.secondaryPort || Number(status.selectedPort) + 1}; ${status.tcpPortOpen ? "TCP probe open" : "forward UDP"}`
+  );
   setText(
     "healthLastChecked",
     status.generatedAt ? `Last checked ${new Date(status.generatedAt).toLocaleTimeString()}` : "Not checked yet"
@@ -247,7 +250,8 @@ function renderHealth(status) {
         : { text: installed ? "After first start" : "Missing", className: installed ? "warn" : "bad" }
     ],
     ["Log file", healthValue(status.paths.log.exists, "Found", "No log yet")],
-    ["Selected port", { text: `${status.selectedPort}`, className: status.tcpPortOpen ? "ok" : "warn" }],
+    ["Game port", { text: `${status.selectedPort}`, className: status.tcpPortOpen ? "ok" : "warn" }],
+    ["Secondary port", { text: `${status.secondaryPort || Number(status.selectedPort) + 1}`, className: "warn" }],
     ["Backup folder", healthValue(status.paths.backups.exists, "Ready", "Will be created")]
   ];
 
@@ -293,9 +297,10 @@ function renderServerDetails(status) {
   const profile = state.profile;
   const details = [
     ["App ID", profile.appId],
-    ["Launch args", profile.server.launchArgs],
-    ["Configured server port", profile.server.port],
-    ["Configured query port", profile.server.queryPort],
+    ["Custom launch args", profile.server.launchArgs],
+    ["Effective launch args", status.effectiveLaunchArgsText || profile.server.launchArgs],
+    ["Game port", status.selectedPort || profile.server.port],
+    ["Secondary port", status.secondaryPort || profile.server.queryPort],
     ["Server folder", status.paths.serverDir.path],
     ["Executable", status.paths.serverExe.path || "Not installed"],
     ["Expected executable", (status.paths.serverInstall?.expectedExecutables || []).join(", ")]
@@ -574,7 +579,11 @@ function readProfileFromForm() {
   next.server.adminPassword = form.elements.adminPassword.value;
   next.server.worldPassword = form.elements.worldPassword.value;
   next.server.password = next.server.worldPassword;
-  next.server.port = Number(form.elements.port.value || 7777);
+  const gamePort = Number(form.elements.port.value || 7777);
+  if (!Number.isInteger(gamePort) || gamePort < 1 || gamePort > 65534) {
+    throw new Error("Game Port must be a whole number from 1 to 65534 because Dragonwilds also uses the next port.");
+  }
+  next.server.port = gamePort;
   next.server.queryPort = Number(next.server.port) + 1;
 
   return next;
@@ -776,7 +785,11 @@ function wireEvents() {
 
   $("#setupForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    await saveSettings();
+    try {
+      await saveSettings();
+    } catch (error) {
+      toast(error.message);
+    }
   });
   $("#runFullCheck").addEventListener("click", (event) => manualHealthCheck(event.currentTarget));
   $("#refreshNow").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
