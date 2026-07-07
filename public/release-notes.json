@@ -1,23 +1,23 @@
 {
-  "version": "0.5.6",
-  "title": "Setup editor and dashboard polish",
+  "version": "0.5.7",
+  "title": "Safer server updates",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Edit setup again",
-      "body": "The Dashboard and Server page now expose Edit Setup so you can change Owner ID, server names, passwords, or Game Port after the first setup."
+      "heading": "Update now stops first",
+      "body": "The Update Server action now stops Dragonwilds before SteamCMD updates the server files, so locked files are much less likely to block the update."
     },
     {
-      "heading": "Fresh installs still prompt",
-      "body": "The setup form still appears automatically once a fresh install has a real DedicatedServer.ini or official template ready to patch."
+      "heading": "Restarts only when expected",
+      "body": "If the server was running before the update, the app starts it again when SteamCMD finishes. If it was offline, it stays offline."
     },
     {
-      "heading": "Safer config saves",
-      "body": "Setup saves are blocked while the managed server process is running so Dragonwilds cannot overwrite live config edits."
+      "heading": "Graceful shutdown path",
+      "body": "The app now tries to quit the managed server cleanly before falling back to Windows process shutdown, with force shutdown reserved for timeout cases."
     },
     {
-      "heading": "Cleaner dashboard",
-      "body": "The DedicatedServer.ini panel now uses Open File instead of showing a long path, health and backup panels are cleaner, and the console summary stays compact in fullscreen."
+      "heading": "Clearer update status",
+      "body": "The dashboard now labels updates as a workflow so it is clearer that stop, SteamCMD update, and optional restart can happen as separate steps."
     }
   ]
 }

@@ -33,6 +33,7 @@ const serverExeCandidates = [
   "RSDragonwildsServer.exe",
   "RSDragonwilds.exe"
 ];
+const serverProcessNames = serverExeCandidates.map((fileName) => path.basename(fileName, path.extname(fileName)));
 const taskOutputLimit = 12000;
 const taskOutputSnapshotLimit = 4000;
 const activityLogSnapshotLimit = 8000;
@@ -40,6 +41,7 @@ const serverLogSnapshotLimit = 5000;
 const logRetentionHours = 72;
 const logRetentionMs = logRetentionHours * 60 * 60 * 1000;
 const activityLogPruneIntervalMs = 5 * 60 * 1000;
+const gracefulStopTimeoutSeconds = 30;
 const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
 const defaultGamePort = 7777;
 const minGamePort = 1;
@@ -263,7 +265,7 @@ async function getProfile() {
 async function saveProfile(profile) {
   assertValidGamePort(profile?.server?.port ?? defaultProfile.server.port);
   const next = normalizeProfile(profile);
-  if (next.writeIniOnSave && serverProcess && !serverProcess.killed) {
+  if (next.writeIniOnSave && isManagedServerProcessRunning()) {
     throw new Error("Stop the Dragonwilds server before saving setup changes. The game can overwrite live config edits.");
   }
   await writeJson(profilePath, next);
@@ -899,6 +901,11 @@ function powershellTask(name, script, options = {}) {
 
 function windowsExternalPowerShellTask(name, script, options = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
+  const {
+    initialOutput,
+    pauseAtEnd = true,
+    ...taskOptions
+  } = options;
   const taskSlug = `${Date.now()}-${safeTaskFileName(name)}`;
   const ps1Path = path.join(dataDir, `${taskSlug}.ps1`);
   const cmdPath = path.join(dataDir, `${taskSlug}.cmd`);
@@ -918,8 +925,10 @@ function windowsExternalPowerShellTask(name, script, options = {}) {
     "set DWSC_EXIT=%ERRORLEVEL%",
     "echo.",
     "echo Task finished with exit code %DWSC_EXIT%.",
-    "echo Close this window or press any key to return to Dragonwilds Server Control.",
-    "pause >nul",
+    pauseAtEnd
+      ? "echo Close this window or press any key to return to Dragonwilds Server Control."
+      : "echo Returning to Dragonwilds Server Control automatically.",
+    pauseAtEnd ? "pause >nul" : "timeout /t 2 >nul",
     "exit /b %DWSC_EXIT%"
   ].join(os.EOL);
 
@@ -932,18 +941,20 @@ function windowsExternalPowerShellTask(name, script, options = {}) {
     cleanupPaths: [ps1Path, cmdPath],
     detached: true,
     externalWindow: true,
-    initialOutput: [
+    initialOutput: initialOutput || [
       `Opened a separate command window for ${name}.`,
       `Command: cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
       `Script: ${cmdPath}`,
       "Watch the external command window for live SteamCMD/PowerShell output and prompts.",
-      "The app will mark this task finished after that window is closed or you press a key at the end."
+      pauseAtEnd
+        ? "The app will mark this task finished after that window is closed or you press a key at the end."
+        : "The app will continue automatically after that command window closes."
     ],
     scriptPath: cmdPath,
     stdio: "ignore",
     windowCommand: `cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
     windowsHide: false,
-    ...options
+    ...taskOptions
   });
 }
 
@@ -1005,11 +1016,110 @@ function psArray(values) {
   return `@(${values.map(psString).join(",")})`;
 }
 
+function isManagedServerProcessRunning() {
+  return Boolean(
+    serverProcess &&
+    serverProcess.pid &&
+    serverProcess.exitCode === null &&
+    serverProcess.signalCode === null
+  );
+}
+
+function trySendGracefulQuitToManagedServer(taskName) {
+  if (!isManagedServerProcessRunning() || !serverProcess.stdin || serverProcess.stdin.destroyed) {
+    return false;
+  }
+
+  try {
+    serverProcess.stdin.write(`quit${os.EOL}`);
+    appendActivity(`${taskName}: sent quit command to the app-managed Dragonwilds server.`);
+    return true;
+  } catch (error) {
+    appendActivity(`${taskName}: could not send quit command to the app-managed server: ${error.message}`);
+    return false;
+  }
+}
+
+function readServerWasRunningMarker(markerPath) {
+  try {
+    return fs.readFileSync(markerPath, "utf8").trim().toLowerCase() === "running";
+  } catch {
+    return false;
+  }
+}
+
+function gracefulStopDragonwildsTask(name, options = {}) {
+  const {
+    markerPath,
+    timeoutSeconds = gracefulStopTimeoutSeconds,
+    ...taskOptions
+  } = options;
+  const timeout = Math.max(5, Number(timeoutSeconds) || gracefulStopTimeoutSeconds);
+  const managedServerWasRunning = isManagedServerProcessRunning();
+  trySendGracefulQuitToManagedServer(name);
+
+  const script = [
+    `$names = ${psArray(serverProcessNames)}`,
+    `$timeoutSeconds = ${timeout}`,
+    `$managedServerWasRunning = ${managedServerWasRunning ? "$true" : "$false"}`,
+    "function Get-DragonwildsProcesses {",
+    "  $items = @()",
+    "  foreach ($name in $names) {",
+    "    $items += @(Get-Process -Name $name -ErrorAction SilentlyContinue)",
+    "  }",
+    "  $items | Sort-Object -Property Id -Unique",
+    "}",
+    "$initial = @(Get-DragonwildsProcesses)",
+    markerPath ? `New-Item -ItemType Directory -Force -Path (Split-Path -Parent ${psString(markerPath)}) | Out-Null` : null,
+    markerPath
+      ? `Set-Content -LiteralPath ${psString(markerPath)} -Encoding ASCII -Value $(if ($initial.Count -gt 0 -or $managedServerWasRunning) { 'running' } else { 'not-running' })`
+      : null,
+    "if ($initial.Count -eq 0) { Write-Output 'No Dragonwilds server process was running.'; exit 0 }",
+    "Write-Output ('Found {0} Dragonwilds server process(es). Requesting graceful shutdown for up to {1} seconds.' -f $initial.Count, $timeoutSeconds)",
+    "foreach ($process in $initial) {",
+    "  try { if ($process.MainWindowHandle -ne 0) { [void]$process.CloseMainWindow() } } catch {}",
+    "}",
+    "Start-Sleep -Seconds 2",
+    "foreach ($process in $initial) {",
+    "  $processId = $process.Id",
+    "  if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { & taskkill.exe /PID $processId /T | Out-Host }",
+    "}",
+    "$deadline = (Get-Date).AddSeconds($timeoutSeconds)",
+    "while ((Get-Date) -lt $deadline) {",
+    "  Start-Sleep -Seconds 1",
+    "  if (@(Get-DragonwildsProcesses).Count -eq 0) { Write-Output 'Dragonwilds server stopped gracefully.'; exit 0 }",
+    "}",
+    "$remaining = @(Get-DragonwildsProcesses)",
+    "if ($remaining.Count -gt 0) {",
+    "  Write-Output ('Graceful shutdown timed out; forcing {0} remaining Dragonwilds process(es).' -f $remaining.Count)",
+    "  foreach ($process in $remaining) {",
+    "    $processId = $process.Id",
+    "    & taskkill.exe /PID $processId /T /F | Out-Host",
+    "  }",
+    "}",
+    "Start-Sleep -Seconds 2",
+    "$after = @(Get-DragonwildsProcesses)",
+    "if ($after.Count -gt 0) { Write-Error ('Unable to stop Dragonwilds server process(es): {0}' -f (($after | Select-Object -ExpandProperty Id) -join ', ')); exit 1 }",
+    "Write-Output 'Dragonwilds server processes are stopped.'",
+    "exit 0"
+  ].filter(Boolean).join("; ");
+
+  return powershellTask(name, script, {
+    pauseAtEnd: false,
+    ...taskOptions
+  });
+}
+
 function steamcmdString(value) {
   return `"${String(value).replace(/"/g, '\\"')}"`;
 }
 
-async function runInstall(profile, validate) {
+async function runInstall(profile, validate, options = {}) {
+  const {
+    onComplete,
+    skipFirstRunConfigBootstrap = false,
+    ...taskOptions
+  } = options;
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
   const steamcmdZip = path.join(os.tmpdir(), "steamcmd.zip");
   const scriptName = validate ? "steamcmd-install-validate.txt" : "steamcmd-update.txt";
@@ -1040,9 +1150,64 @@ async function runInstall(profile, validate) {
   ].join("; ");
 
   return powershellTask(validate ? "Install or repair server with validate" : "Update server", script, {
-    onComplete: async ({ exitCode }) => {
-      if (exitCode === 0) {
+    ...taskOptions,
+    onComplete: async ({ exitCode, task }) => {
+      if (exitCode === 0 && !skipFirstRunConfigBootstrap) {
         await maybeStartFirstRunConfigBootstrap();
+      }
+      if (typeof onComplete === "function") {
+        await onComplete({ exitCode, task });
+      }
+    }
+  });
+}
+
+async function runUpdateServerWorkflow(profile) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const restartMarkerPath = path.join(dataDir, `${Date.now()}-update-server-restart-state.txt`);
+  appendActivity("Update workflow started. Dragonwilds will be stopped before SteamCMD updates the server files.");
+
+  return gracefulStopDragonwildsTask("Stop server before update", {
+    markerPath: restartMarkerPath,
+    onComplete: async ({ exitCode }) => {
+      if (exitCode !== 0) {
+        removeQuietly(restartMarkerPath);
+        appendActivity("Update server skipped because Dragonwilds could not be stopped cleanly.");
+        return;
+      }
+
+      const shouldRestart = readServerWasRunningMarker(restartMarkerPath);
+      appendActivity(
+        shouldRestart
+          ? "Dragonwilds was running before update. It will restart after SteamCMD finishes."
+          : "Dragonwilds was already offline before update. It will stay offline after SteamCMD finishes."
+      );
+
+      try {
+        await runInstall(await getProfile(), false, {
+          skipFirstRunConfigBootstrap: true,
+          onComplete: async ({ exitCode: updateExitCode }) => {
+            removeQuietly(restartMarkerPath);
+            if (updateExitCode !== 0) {
+              appendActivity(`Server restart skipped because SteamCMD update failed (exit ${updateExitCode}).`);
+              return;
+            }
+            if (!shouldRestart) {
+              appendActivity("Update complete. Dragonwilds was offline before update, so it was left offline.");
+              return;
+            }
+
+            try {
+              await startGameServer(await getProfile());
+              appendActivity("Update complete. Dragonwilds server restarted.");
+            } catch (error) {
+              appendActivity(`Update complete, but the server could not be restarted: ${error.message}`);
+            }
+          }
+        });
+      } catch (error) {
+        removeQuietly(restartMarkerPath);
+        appendActivity(`Update server did not start after stopping Dragonwilds: ${error.message}`);
       }
     }
   });
@@ -1086,7 +1251,7 @@ function startFirstRunConfigBootstrap(profile, serverExe) {
 }
 
 async function startGameServer(profile) {
-  if (serverProcess && !serverProcess.killed) {
+  if (isManagedServerProcessRunning()) {
     throw new Error("Server process is already running from this control app.");
   }
 
@@ -1125,7 +1290,7 @@ async function startGameServer(profile) {
 }
 
 function stopGameServer() {
-  if (serverProcess && serverProcess.pid) {
+  if (isManagedServerProcessRunning()) {
     const pid = serverProcess.pid;
     return beginTask("Stop server process", "taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
   }
@@ -1287,8 +1452,8 @@ async function getStatus() {
   return {
     appVersion: appPackage.version,
     generatedAt: timestamp(),
-    serverRunning: Boolean(serverProcess && !serverProcess.killed),
-    serverPid: serverProcess?.pid || null,
+    serverRunning: isManagedServerProcessRunning(),
+    serverPid: isManagedServerProcessRunning() ? serverProcess.pid : null,
     task: taskSnapshot(),
     selectedPort,
     secondaryPort,
@@ -1407,7 +1572,7 @@ async function handleApi(request, response, url) {
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/update") {
-      sendJson(response, 202, { task: await runInstall(await getProfile(), false) });
+      sendJson(response, 202, { task: await runUpdateServerWorkflow(await getProfile()) });
       return;
     }
 
@@ -1449,7 +1614,7 @@ async function handleApi(request, response, url) {
 
     if (request.method === "POST" && url.pathname === "/api/actions/restart") {
       const profile = await getProfile();
-      if (serverProcess && serverProcess.pid) {
+      if (isManagedServerProcessRunning()) {
         serverProcess.kill();
         serverProcess = null;
       }

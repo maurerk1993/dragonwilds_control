@@ -729,7 +729,7 @@ async function saveSettings() {
 async function runAction(action) {
   const map = {
     install: ["/api/actions/install", "Install or repair task started"],
-    update: ["/api/actions/update", "Update task started"],
+    update: ["/api/actions/update", "Update workflow started"],
     "bootstrap-config": ["/api/actions/bootstrap-config", "First-run config generation started"],
     start: ["/api/actions/start", "Server start requested"],
     stop: ["/api/actions/stop", "Server stop requested"],

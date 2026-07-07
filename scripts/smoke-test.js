@@ -80,16 +80,43 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.6") {
-    throw new Error(`Expected version 0.5.6, got ${app.version}`);
+  if (app.version !== "0.5.7") {
+    throw new Error(`Expected version 0.5.7, got ${app.version}`);
   }
 
   const serverSource = await fs.readFile(path.join(root, "server", "index.js"), "utf8");
+  const appSource = await fs.readFile(path.join(root, "public", "app.js"), "utf8");
   if (serverSource.includes("startCommand") || serverSource.includes("/wait cmd.exe")) {
     throw new Error("External task launcher should not use the hidden start/wait wrapper.");
   }
   if (!serverSource.includes("detached: true") || !serverSource.includes("windowsHide: false")) {
     throw new Error("External task launcher should directly spawn a detached visible cmd.exe window.");
+  }
+  if (!serverSource.includes("async function runUpdateServerWorkflow")) {
+    throw new Error("Update Server should use a dedicated stop-update-restart workflow.");
+  }
+  if (!serverSource.includes("runUpdateServerWorkflow(await getProfile())")) {
+    throw new Error("Update endpoint should call the update workflow instead of raw SteamCMD install.");
+  }
+  if (serverSource.includes('task: await runInstall(await getProfile(), false)')) {
+    throw new Error("Update endpoint is wired directly to SteamCMD without stopping the server first.");
+  }
+  if (
+    !serverSource.includes("Stop server before update") ||
+    !serverSource.includes("Dragonwilds was running before update") ||
+    !serverSource.includes("managedServerWasRunning") ||
+    !serverSource.includes("skipFirstRunConfigBootstrap")
+  ) {
+    throw new Error("Update workflow is missing stop, restart-marker, or update chaining behavior.");
+  }
+  if (
+    !serverSource.includes("trySendGracefulQuitToManagedServer") ||
+    !serverSource.includes("Graceful shutdown timed out; forcing")
+  ) {
+    throw new Error("Update workflow is missing graceful shutdown fallback coverage.");
+  }
+  if (!appSource.includes("Update workflow started")) {
+    throw new Error("Update action should describe the stop-update-restart workflow.");
   }
 
   const profile = await requestJson("/api/settings");

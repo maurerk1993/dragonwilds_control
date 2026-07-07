@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.7 - Safer server updates
+
+- Changed Update Server so it stops Dragonwilds before running the SteamCMD update.
+- Added a graceful shutdown path that tries the managed server console first, then a normal Windows close, and only force-stops remaining processes after a timeout.
+- Restarted Dragonwilds automatically after a successful update only when it was running before the update began.
+- Left the server offline after updates that started while the server was already offline.
+- Updated the dashboard action copy so admins can tell that update is now a stop-update-restart workflow.
+
 ## 0.5.6 - Setup editor and dashboard polish
 
 - Added Edit Setup controls on the Dashboard and Server page so saved dedicated-server values can be changed after first setup.
