@@ -95,7 +95,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.5.4</strong>
+            <strong id="appVersion">0.5.5</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -221,6 +221,10 @@
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-sync"></use></svg>
                 Update Server
               </button>
+              <button class="action-button" data-action="bootstrap-config" data-requires-server-exe>
+                <svg class="button-icon" aria-hidden="true"><use href="#icon-terminal"></use></svg>
+                Generate Config
+              </button>
               <button class="action-button" data-action="backup" data-requires-saves>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-backup"></use></svg>
                 Backup Now
@@ -286,6 +290,10 @@
                 <button class="action-button warm" data-action="install" data-show-when-installed data-confirm-repair hidden>
                   <svg class="button-icon" aria-hidden="true"><use href="#icon-wrench"></use></svg>
                   Advanced Repair / Validate
+                </button>
+                <button class="action-button" data-action="bootstrap-config" data-requires-server-exe>
+                  <svg class="button-icon" aria-hidden="true"><use href="#icon-terminal"></use></svg>
+                  Generate DedicatedServer.ini
                 </button>
                 <p class="help-text" id="installModeHelp">Run the initial install first. After files are detected, this page switches to update-first controls and repair requires extra confirmation.</p>
               </div>

@@ -89,6 +89,10 @@ function hasWindowsConfig(status = state.status) {
   return Boolean(status?.paths?.config?.exists);
 }
 
+function hasConfigSource(status = state.status) {
+  return Boolean(status?.paths?.config?.exists || status?.configuration?.templateAvailable);
+}
+
 function isConfigReady(status = state.status) {
   return Boolean(status?.configuration?.iniReady ?? (hasRequiredSetupValues(status) && hasWindowsConfig(status)));
 }
@@ -198,7 +202,7 @@ function renderStatus() {
   if (status.task && status.task.status === "running") {
     taskNotice.hidden = false;
     setText("taskName", status.task.name);
-    setText("taskDetails", status.task.recentOutput.slice(-1)[0] || "Waiting for output...");
+    setText("taskDetails", status.task.userPrompt || status.task.recentOutput.slice(-1)[0] || "Waiting for output...");
   } else {
     taskNotice.hidden = true;
   }
@@ -232,7 +236,7 @@ function renderHealth(status) {
     : installed && templateReady
       ? { text: "Template ready", className: "warn" }
       : installed
-        ? { text: "Template missing", className: "bad" }
+        ? { text: "Generate config", className: "warn" }
         : { text: "Install first", className: "warn" };
   const items = [
     ["SteamCMD", healthValue(status.paths.steamcmd.exists, "Ready", "Missing")],
@@ -539,6 +543,9 @@ function renderInstallMode(status) {
   $$("[data-requires-exe]").forEach((element) => {
     element.disabled = !executableReady || !configReady || taskIsActive();
   });
+  $$("[data-requires-server-exe]").forEach((element) => {
+    element.disabled = !executableReady || hasConfigSource(status) || taskIsActive();
+  });
   $$("[data-requires-saves]").forEach((element) => {
     element.disabled = !savesReady || taskIsActive();
   });
@@ -561,6 +568,8 @@ function renderInstallMode(status) {
     $("#actionHint").textContent = "Install is still running or incomplete. Wait for the external command window to finish, then refresh.";
   } else if (!installed) {
     $("#actionHint").textContent = "Install the dedicated server first. Setup prompts appear after files are detected.";
+  } else if (!hasConfigSource(status)) {
+    $("#actionHint").textContent = "Run Generate Config to launch the server once, then close its console after 10 seconds so DedicatedServer.ini can be created.";
   } else if (!setupValuesReady) {
     $("#actionHint").textContent = `Complete setup before start. Missing: ${configMissingText(status)}.`;
   } else if (!status.paths.config.exists) {
@@ -579,7 +588,7 @@ function renderSetupGate(status) {
   const installed = isServerInstalled(status);
   const installStillRunning = isInstallOrUpdateTaskActive(status);
   const partialInstall = isServerInstallPartial(status);
-  gate.hidden = !installed || ready || installStillRunning || partialInstall;
+  gate.hidden = !installed || ready || installStillRunning || partialInstall || !hasConfigSource(status);
   if (ready) return;
   $("#setupMissingList").innerHTML = configMissingItems(status)
     .map((item) => `<li>${escapeHtml(item)}</li>`)
@@ -652,6 +661,7 @@ async function runAction(action) {
   const map = {
     install: ["/api/actions/install", "Install or repair task started"],
     update: ["/api/actions/update", "Update task started"],
+    "bootstrap-config": ["/api/actions/bootstrap-config", "First-run config generation started"],
     start: ["/api/actions/start", "Server start requested"],
     stop: ["/api/actions/stop", "Server stop requested"],
     restart: ["/api/actions/restart", "Server restart requested"],
@@ -670,6 +680,14 @@ async function runAction(action) {
   }
   if (["start", "restart"].includes(action) && !hasServerExecutable()) {
     toast("The server executable was not detected. Run the initial install first.");
+    return;
+  }
+  if (action === "bootstrap-config" && !hasServerExecutable()) {
+    toast("Install the Dragonwilds dedicated server before generating DedicatedServer.ini.");
+    return;
+  }
+  if (action === "bootstrap-config" && hasConfigSource()) {
+    toast("DedicatedServer.ini or the official config template is already available. Fill setup and save it.");
     return;
   }
   if (["start", "restart"].includes(action) && !isConfigReady()) {

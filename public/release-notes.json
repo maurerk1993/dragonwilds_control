@@ -1,19 +1,19 @@
 {
-  "version": "0.5.4",
-  "title": "Force visible CMD launch",
+  "version": "0.5.5",
+  "title": "First-run config generation",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "CMD launches directly",
-      "body": "Install and update tasks now spawn a detached visible cmd.exe window directly instead of relying on a hidden start/wait wrapper."
+      "heading": "Runs the server once after install",
+      "body": "After SteamCMD finishes and the server executable is detected, the app can launch Dragonwilds once so the game can create DedicatedServer.ini."
     },
     {
-      "heading": "Better troubleshooting details",
-      "body": "The Console tab now records the exact command and temporary script path used for external task windows."
+      "heading": "10-second close prompt",
+      "body": "The app waits 10 seconds, then tells you to close the server console so the generated config can be patched safely."
     },
     {
-      "heading": "Still pauses at the end",
-      "body": "The external task window still pauses at the end so you can read SteamCMD's final output before it closes."
+      "heading": "Setup waits for a config source",
+      "body": "The Owner ID and password setup prompt stays hidden until DedicatedServer.ini or an official template actually exists."
     }
   ]
 }

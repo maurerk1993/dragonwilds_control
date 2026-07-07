@@ -272,11 +272,16 @@ async function saveProfile(profile) {
       lastIniPatchError = null;
       appendActivity("Settings saved. DedicatedServer.ini patching is waiting for the current install/update task to finish.");
     } else if (install.readyForSetup) {
-      try {
-        await patchDedicatedServerIni(next, { allowTemplateCopy: true });
-      } catch (error) {
-        lastIniPatchError = { message: error.message, at: timestamp() };
-        appendActivity(`Settings saved, but DedicatedServer.ini was not patched: ${error.message}`);
+      if (!hasDedicatedConfigSource(next)) {
+        lastIniPatchError = null;
+        appendActivity("Settings saved. Run Generate Config to let Dragonwilds create DedicatedServer.ini before patching setup values.");
+      } else {
+        try {
+          await patchDedicatedServerIni(next, { allowTemplateCopy: true });
+        } catch (error) {
+          lastIniPatchError = { message: error.message, at: timestamp() };
+          appendActivity(`Settings saved, but DedicatedServer.ini was not patched: ${error.message}`);
+        }
       }
     } else {
       lastIniPatchError = null;
@@ -681,6 +686,7 @@ function taskSnapshot() {
     externalWindow: Boolean(activeTask.externalWindow),
     windowCommand: activeTask.windowCommand,
     scriptPath: activeTask.scriptPath,
+    userPrompt: activeTask.userPrompt || null,
     canReceiveInput:
       activeTask.acceptsInput &&
       ["running", "stopping"].includes(activeTask.status) &&
@@ -696,6 +702,19 @@ function isInstallTaskRunning() {
       ["running", "stopping"].includes(activeTask.status) &&
       /install|update|repair/i.test(activeTask.name || "")
   );
+}
+
+function hasDedicatedConfigSource(profile) {
+  return exists(profile.paths.configPath) || getDedicatedConfigTemplateStatus(profile).exists;
+}
+
+function promptUserToCloseFirstRunConsole(taskId) {
+  if (!activeTask || activeTask.id !== taskId || !["running", "stopping"].includes(activeTask.status)) return;
+  const message =
+    "Close the Dragonwilds server console now. After it closes, the app will check for DedicatedServer.ini again.";
+  activeTask.userPrompt = message;
+  pushTaskOutput(activeTask, message);
+  appendActivity(message);
 }
 
 function safeTaskFileName(name) {
@@ -762,7 +781,8 @@ function beginTask(name, command, args, options = {}) {
     acceptsInput: options.acceptsInput !== false,
     externalWindow: Boolean(options.externalWindow),
     windowCommand: options.windowCommand || null,
-    scriptPath: options.scriptPath || null
+    scriptPath: options.scriptPath || null,
+    userPrompt: options.userPrompt || null
   };
   activeTask = task;
   appendActivity(`Task started: ${name}${task.externalWindow ? " (external command window opened)" : ""}`);
@@ -776,6 +796,7 @@ function beginTask(name, command, args, options = {}) {
     cleanupPaths,
     externalWindow,
     initialOutput,
+    onComplete,
     scriptPath,
     windowCommand,
     windowsHide,
@@ -808,6 +829,12 @@ function beginTask(name, command, args, options = {}) {
     serverDetectionCache = null;
     appendActivity(`Task finished: ${name} (exit ${exitCode})`);
     for (const filePath of cleanupPaths || []) removeQuietly(filePath);
+    if (typeof onComplete === "function") {
+      setTimeout(() => {
+        Promise.resolve(onComplete({ exitCode, task }))
+          .catch((error) => appendActivity(`Post-task action failed for ${name}: ${error.message}`));
+      }, 250);
+    }
   });
 
   return taskSnapshot();
@@ -853,9 +880,9 @@ function stopActiveTask() {
   return taskSnapshot();
 }
 
-function powershellTask(name, script) {
+function powershellTask(name, script, options = {}) {
   if (process.platform === "win32") {
-    return windowsExternalPowerShellTask(name, script);
+    return windowsExternalPowerShellTask(name, script, options);
   }
 
   return beginTask(name, "powershell.exe", [
@@ -864,10 +891,10 @@ function powershellTask(name, script) {
     "Bypass",
     "-Command",
     script
-  ]);
+  ], options);
 }
 
-function windowsExternalPowerShellTask(name, script) {
+function windowsExternalPowerShellTask(name, script, options = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const taskSlug = `${Date.now()}-${safeTaskFileName(name)}`;
   const ps1Path = path.join(dataDir, `${taskSlug}.ps1`);
@@ -912,7 +939,58 @@ function windowsExternalPowerShellTask(name, script) {
     scriptPath: cmdPath,
     stdio: "ignore",
     windowCommand: `cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
-    windowsHide: false
+    windowsHide: false,
+    ...options
+  });
+}
+
+function cmdArgument(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function windowsExternalExecutableTask(name, executablePath, args, options = {}) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const taskSlug = `${Date.now()}-${safeTaskFileName(name)}`;
+  const cmdPath = path.join(dataDir, `${taskSlug}.cmd`);
+  const title = safeWindowTitle(name);
+  const commandLine = [cmdArgument(executablePath), ...(args || []).map(cmdArgument)].join(" ");
+  const cmd = [
+    "@echo off",
+    `title ${title}`,
+    "echo Dragonwilds Server Control",
+    `echo Task: ${name.replace(/[&<>|]/g, "")}`,
+    "echo.",
+    "echo The dedicated server is being launched once so it can create its default config files.",
+    "echo Leave this window open for at least 10 seconds.",
+    "echo When the control app asks you to close this server console, close this window.",
+    "echo.",
+    commandLine,
+    "set DWSC_EXIT=%ERRORLEVEL%",
+    "echo.",
+    "echo Server process exited with code %DWSC_EXIT%.",
+    "echo Close this window or press any key to return to Dragonwilds Server Control.",
+    "pause >nul",
+    "exit /b %DWSC_EXIT%"
+  ].join(os.EOL);
+
+  fs.writeFileSync(cmdPath, cmd, "utf8");
+
+  const commandArgs = ["/d", "/s", "/c", cmdPath];
+  return beginTask(name, "cmd.exe", commandArgs, {
+    acceptsInput: false,
+    cleanupPaths: [cmdPath],
+    detached: true,
+    externalWindow: true,
+    initialOutput: options.initialOutput || [
+      `Opened ${path.basename(executablePath)} once to let Dragonwilds create DedicatedServer.ini.`,
+      "Wait 10 seconds, then close the external server console when prompted.",
+      `Script: ${cmdPath}`
+    ],
+    scriptPath: cmdPath,
+    stdio: "ignore",
+    windowCommand: `cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
+    windowsHide: false,
+    ...options
   });
 }
 
@@ -958,7 +1036,50 @@ async function runInstall(profile, validate) {
     "exit $steamcmdExitCode"
   ].join("; ");
 
-  return powershellTask(validate ? "Install or repair server with validate" : "Update server", script);
+  return powershellTask(validate ? "Install or repair server with validate" : "Update server", script, {
+    onComplete: async ({ exitCode }) => {
+      if (exitCode === 0) {
+        await maybeStartFirstRunConfigBootstrap();
+      }
+    }
+  });
+}
+
+async function maybeStartFirstRunConfigBootstrap() {
+  const profile = await getProfile();
+  const install = await detectServerInstall(profile);
+  if (!install.readyForSetup || !install.serverExe) {
+    appendActivity("Install finished, but the Dragonwilds server executable was not detected yet. First-run config generation was skipped.");
+    return null;
+  }
+
+  if (hasDedicatedConfigSource(profile)) {
+    appendActivity("DedicatedServer.ini or official config template already exists. First-run config generation was skipped.");
+    return null;
+  }
+
+  appendActivity("No DedicatedServer.ini/template was found after install. Launching the server executable once to let Dragonwilds generate config files.");
+  return startFirstRunConfigBootstrap(profile, install.serverExe);
+}
+
+function startFirstRunConfigBootstrap(profile, serverExe) {
+  const args = getEffectiveLaunchArgs(profile);
+  const snapshot = windowsExternalExecutableTask("Generate DedicatedServer.ini first-run config", serverExe, args, {
+    onComplete: async () => {
+      serverDetectionCache = null;
+      const currentProfile = await getProfile();
+      if (hasDedicatedConfigSource(currentProfile)) {
+        appendActivity("DedicatedServer.ini/config template is now available. Complete setup values and save them before starting the server.");
+      } else {
+        appendActivity(
+          `DedicatedServer.ini is still missing after first-run config generation. Expected ${currentProfile.paths.configPath} or ${getDedicatedConfigTemplateStatus(currentProfile).path}.`
+        );
+      }
+    }
+  });
+
+  setTimeout(() => promptUserToCloseFirstRunConsole(snapshot.id), 10000);
+  return snapshot;
 }
 
 async function startGameServer(profile) {
@@ -1252,6 +1373,16 @@ async function handleApi(request, response, url) {
 
     if (request.method === "POST" && url.pathname === "/api/actions/repair") {
       sendJson(response, 202, { task: await runInstall(await getProfile(), true) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/actions/bootstrap-config") {
+      const profile = await getProfile();
+      const install = await detectServerInstall(profile);
+      if (!install.serverExe) {
+        throw new Error("Install the Dragonwilds dedicated server before generating DedicatedServer.ini.");
+      }
+      sendJson(response, 202, { task: startFirstRunConfigBootstrap(profile, install.serverExe) });
       return;
     }
 

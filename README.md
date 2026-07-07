@@ -39,6 +39,8 @@ Dragonwilds also uses the next port as its Secondary Port. If the Game Port is `
 
 The app does not treat SteamCMD's early manifest file or partial download files as a complete install. First-run setup stays locked until the Dragonwilds server executable is detected. `DedicatedServer.ini` is not checked or patched while install/update is still running or before the executable exists.
 
+If the installed server does not include a Windows config or official Linux template yet, the app launches `RSDragonwildsServer.exe` once so Dragonwilds can create its default config files. Leave that server console open for at least 10 seconds, then close it when the app prompts you. After it closes, the app checks for `DedicatedServer.ini` again and then unlocks setup when a config source is available.
+
 For MSI packaging:
 
 ```powershell

@@ -80,8 +80,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.4") {
-    throw new Error(`Expected version 0.5.4, got ${app.version}`);
+  if (app.version !== "0.5.5") {
+    throw new Error(`Expected version 0.5.5, got ${app.version}`);
   }
 
   const serverSource = await fs.readFile(path.join(root, "server", "index.js"), "utf8");
@@ -168,8 +168,11 @@ async function main() {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  if (!savedWithoutTemplate.status.configuration.lastPatchError) {
-    throw new Error("Saving setup without an official template should report a patch error.");
+  if (savedWithoutTemplate.status.configuration.lastPatchError) {
+    throw new Error("Saving setup before a config/template exists should not report a patch error.");
+  }
+  if (savedWithoutTemplate.status.paths.config.exists || savedWithoutTemplate.status.configuration.templateAvailable) {
+    throw new Error("Config source should not be reported before the Windows INI or official template exists.");
   }
 
   await fs.mkdir(path.dirname(linuxTemplatePath), { recursive: true });
@@ -296,6 +299,9 @@ async function main() {
   }
   if (!page.includes("Use the external command window for install/update input")) {
     throw new Error("Dashboard HTML is missing the external command window console guidance.");
+  }
+  if (!page.includes('data-action="bootstrap-config"') || !page.includes("Generate DedicatedServer.ini")) {
+    throw new Error("Dashboard HTML is missing the first-run config generation action.");
   }
   if (!page.includes("Game Port") || !page.includes("Secondary Port") || !page.includes('max="65534"')) {
     throw new Error("Dashboard HTML is missing Game Port or Secondary Port setup guidance.");

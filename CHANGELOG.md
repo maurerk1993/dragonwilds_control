@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.5 - First-run config generation
+
+- Added a first-run config generation task that launches the Dragonwilds server executable once after install when no `DedicatedServer.ini` or official template exists.
+- Added a 10-second prompt telling the user to close the server console so the generated config can be patched by the app.
+- Added a manual Generate DedicatedServer.ini action for already-installed servers that still need the first-run config file.
+- Hid the setup prompt until a Windows config or official template is actually available.
+
 ## 0.5.4 - Force visible CMD launch
 
 - Replaced the hidden `cmd /c start /wait` launcher with a direct detached `cmd.exe` task process using `windowsHide: false`.
