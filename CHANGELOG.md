@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.8 - Dashboard and backup management polish
+
+- Redesigned the dashboard with a cleaner compact layout and smaller Quick Actions.
+- Moved Health Check from the Dashboard to the Server tab.
+- Detected Dragonwilds dedicated server processes even when they were started outside the control app.
+- Disabled Stop and Restart controls when no dedicated server process is running.
+- Added backup deletion on the Backups page.
+- Added a backup retention setting that keeps the last configured number of backups and prunes the oldest files.
+
 ## 0.5.7 - Safer server updates
 
 - Changed Update Server so it stops Dragonwilds before running the SteamCMD update.

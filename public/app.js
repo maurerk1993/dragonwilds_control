@@ -177,7 +177,12 @@ function renderStatus() {
   setText("selectedPort", String(status.selectedPort));
   setText("maxPlayersTop", String(profile.server.maxPlayers));
   setText("serverStatus", status.serverRunning ? "ONLINE" : "OFFLINE");
-  setText("serverPid", status.serverPid ? `PID ${status.serverPid}` : "Process not owned by app");
+  setText(
+    "serverPid",
+    status.serverPid
+      ? `PID ${status.serverPid}${status.serverProcesses?.[0]?.source === "external" ? " (external)" : ""}`
+      : "No process detected"
+  );
   setText("steamStatus", status.paths.steamcmd.exists ? "READY" : "MISSING");
   setText("steamPath", status.paths.steamcmd.path);
   setText(
@@ -352,6 +357,18 @@ function renderServerDetails(status) {
 
 function renderBackups() {
   const backups = state.status?.backups || [];
+  const recentList = renderBackupItems(backups.slice(0, 4), { showDelete: false });
+  const fullList = renderBackupItems(backups, { showDelete: true });
+
+  $("#recentBackups").innerHTML = recentList;
+  $("#allBackups").innerHTML = fullList;
+  const retentionInput = $("#backupRetentionCount");
+  if (retentionInput && document.activeElement !== retentionInput) {
+    retentionInput.value = String(state.profile?.backups?.retentionCount || state.status?.backupRetentionCount || 10);
+  }
+}
+
+function renderBackupItems(backups, options = {}) {
   const list = backups.length
     ? backups
         .map(
@@ -362,6 +379,11 @@ function renderBackups() {
                 <div class="backup-name">${escapeHtml(backup.name)}</div>
                 <div class="backup-meta">${new Date(backup.modifiedAt).toLocaleString()} &middot; ${formatBytes(backup.sizeBytes)}</div>
               </div>
+              ${
+                options.showDelete
+                  ? `<button class="ghost-button danger-text backup-delete" type="button" data-delete-backup="${escapeAttr(backup.id)}">Delete</button>`
+                  : ""
+              }
             </div>
           `
         )
@@ -372,9 +394,7 @@ function renderBackups() {
         <span>Use Backup Now after the save folder exists.</span>
       </div>
     `;
-
-  $("#recentBackups").innerHTML = list;
-  $("#allBackups").innerHTML = list;
+  return list;
 }
 
 function buildConsoleLines(status = state.status) {
@@ -560,6 +580,12 @@ function renderInstallMode(status) {
   $$("[data-requires-exe]").forEach((element) => {
     element.disabled = !executableReady || !configReady || taskIsActive();
   });
+  $$("[data-requires-running]").forEach((element) => {
+    element.disabled = element.disabled || !status.serverRunning || taskIsActive();
+  });
+  $$("[data-requires-stopped]").forEach((element) => {
+    element.disabled = Boolean(status.serverRunning) || element.disabled || taskIsActive();
+  });
   $$("[data-requires-server-exe]").forEach((element) => {
     element.disabled = !executableReady || hasConfigSource(status) || taskIsActive();
   });
@@ -726,6 +752,22 @@ async function saveSettings() {
   }
 }
 
+async function saveBackupSettings() {
+  const input = $("#backupRetentionCount");
+  const retentionCount = Number(input?.value || 10);
+  if (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 999) {
+    throw new Error("Keep last backups must be a whole number from 1 to 999.");
+  }
+  const payload = await api("/api/backups/settings", {
+    method: "PUT",
+    body: JSON.stringify({ retentionCount })
+  });
+  state.profile = payload.profile;
+  state.status = payload.status;
+  renderAll();
+  toast(`Backup retention saved. Keeping last ${retentionCount} backups.`);
+}
+
 async function runAction(action) {
   const map = {
     install: ["/api/actions/install", "Install or repair task started"],
@@ -749,6 +791,14 @@ async function runAction(action) {
   }
   if (["start", "restart"].includes(action) && !hasServerExecutable()) {
     toast("The server executable was not detected. Run the initial install first.");
+    return;
+  }
+  if (action === "start" && state.status?.serverRunning) {
+    toast("Dragonwilds dedicated server is already running.");
+    return;
+  }
+  if (["stop", "restart"].includes(action) && !state.status?.serverRunning) {
+    toast("Dragonwilds dedicated server is not running.");
     return;
   }
   if (action === "bootstrap-config" && !hasServerExecutable()) {
@@ -780,6 +830,18 @@ async function runAction(action) {
   toast(message);
   if (payload.task) state.status.task = payload.task;
   await refreshStatus();
+}
+
+async function deleteBackup(backupId) {
+  if (!confirm(`Delete backup ${backupId}? This cannot be undone.`)) return;
+  const payload = await api(`/api/backups/${encodeURIComponent(backupId)}`, {
+    method: "DELETE"
+  });
+  if (payload.backups) {
+    state.status.backups = payload.backups;
+  }
+  renderBackups();
+  toast("Backup deleted.");
 }
 
 async function sendConsoleInput(input) {
@@ -848,6 +910,7 @@ function wireEvents() {
         toast(error.message);
       } finally {
         actionButton.disabled = false;
+        renderStatus();
       }
     }
 
@@ -892,6 +955,18 @@ function wireEvents() {
       }
     }
 
+    const deleteBackupButton = event.target.closest("[data-delete-backup]");
+    if (deleteBackupButton) {
+      try {
+        deleteBackupButton.disabled = true;
+        await deleteBackup(deleteBackupButton.dataset.deleteBackup);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        renderBackups();
+      }
+    }
+
   });
 
   document.body.addEventListener("submit", async (event) => {
@@ -911,6 +986,14 @@ function wireEvents() {
     event.preventDefault();
     try {
       await saveSettings();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  $("#backupSettingsForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await saveBackupSettings();
     } catch (error) {
       toast(error.message);
     }

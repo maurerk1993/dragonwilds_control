@@ -66,6 +66,9 @@ const defaultProfile = {
     logPath: "C:\\GameServers\\RSDragonwildsDedicatedServer\\RSDragonwilds\\Saved\\Logs\\RSDragonwilds.log",
     backupDir: "C:\\GameServers\\RSDragonwildsDedicatedServer\\Backups"
   },
+  backups: {
+    retentionCount: 10
+  },
   server: {
     ownerId: "",
     name: "The Dragonwilds Server",
@@ -166,6 +169,7 @@ async function writeJson(filePath, value) {
 function normalizeProfile(profile) {
   const next = deepMerge(defaultProfile, profile || {});
   const gamePort = normalizeGamePort(next.server.port);
+  const retentionCount = Number(next.backups?.retentionCount);
   if (!next.server.worldPassword && next.server.password) {
     next.server.worldPassword = next.server.password;
   }
@@ -173,6 +177,11 @@ function normalizeProfile(profile) {
   next.server.port = gamePort;
   next.server.queryPort = gamePort + 1;
   next.server.launchArgs = String(next.server.launchArgs || "").trim() || defaultProfile.server.launchArgs;
+  next.backups = {
+    ...defaultProfile.backups,
+    ...(next.backups || {}),
+    retentionCount: Number.isInteger(retentionCount) && retentionCount > 0 ? Math.min(retentionCount, 999) : defaultProfile.backups.retentionCount
+  };
   next.iniMappings = { ...defaultProfile.iniMappings };
   next.customIniValues = Array.isArray(next.customIniValues) ? next.customIniValues : [];
   return next;
@@ -265,7 +274,7 @@ async function getProfile() {
 async function saveProfile(profile) {
   assertValidGamePort(profile?.server?.port ?? defaultProfile.server.port);
   const next = normalizeProfile(profile);
-  if (next.writeIniOnSave && isManagedServerProcessRunning()) {
+  if (next.writeIniOnSave && await isDragonwildsServerRunning()) {
     throw new Error("Stop the Dragonwilds server before saving setup changes. The game can overwrite live config edits.");
   }
   await writeJson(profilePath, next);
@@ -299,6 +308,22 @@ async function saveProfile(profile) {
     );
   }
   return next;
+}
+
+async function saveBackupSettings(settings) {
+  const profile = normalizeProfile(await getProfile());
+  const retentionCount = Number(settings?.retentionCount);
+  if (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 999) {
+    throw new Error("Keep last backups must be a whole number from 1 to 999.");
+  }
+  profile.backups = {
+    ...(profile.backups || {}),
+    retentionCount
+  };
+  await writeJson(profilePath, profile);
+  await pruneBackups(profile);
+  appendActivity(`Backup retention changed to keep last ${retentionCount}.`);
+  return profile;
 }
 
 function valueIsSet(value) {
@@ -1025,6 +1050,77 @@ function isManagedServerProcessRunning() {
   );
 }
 
+function runProcessCapture(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      ...options
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode) => {
+      resolve({ exitCode, stdout, stderr });
+    });
+  });
+}
+
+async function getRunningDragonwildsProcesses() {
+  const managedPid = isManagedServerProcessRunning() ? serverProcess.pid : null;
+  if (process.platform !== "win32") {
+    return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
+  }
+
+  const script = [
+    `$names = ${psArray(serverProcessNames)}`,
+    "$items = @()",
+    "foreach ($name in $names) {",
+    "  foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {",
+    "    $items += [PSCustomObject]@{ Id = $process.Id; ProcessName = $process.ProcessName; Path = $process.Path }",
+    "  }",
+    "}",
+    "$items | Sort-Object -Property Id -Unique | ConvertTo-Json -Compress"
+  ].join("; ");
+
+  try {
+    const result = await runProcessCapture("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script
+    ]);
+    const raw = result.stdout.trim();
+    if (!raw) {
+      return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
+    }
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items
+      .filter((item) => item && item.Id)
+      .map((item) => ({
+        pid: Number(item.Id),
+        name: item.ProcessName || "Dragonwilds server",
+        path: item.Path || null,
+        source: Number(item.Id) === managedPid ? "managed" : "external"
+      }));
+  } catch (error) {
+    appendActivity(`Could not scan Dragonwilds server processes: ${error.message}`);
+    return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
+  }
+}
+
+async function isDragonwildsServerRunning() {
+  return (await getRunningDragonwildsProcesses()).length > 0;
+}
+
 function trySendGracefulQuitToManagedServer(taskName) {
   if (!isManagedServerProcessRunning() || !serverProcess.stdin || serverProcess.stdin.destroyed) {
     return false;
@@ -1251,8 +1347,9 @@ function startFirstRunConfigBootstrap(profile, serverExe) {
 }
 
 async function startGameServer(profile) {
-  if (isManagedServerProcessRunning()) {
-    throw new Error("Server process is already running from this control app.");
+  const runningProcesses = await getRunningDragonwildsProcesses();
+  if (runningProcesses.length) {
+    throw new Error("Dragonwilds dedicated server is already running.");
   }
 
   assertDedicatedConfigReady(profile, "starting the server");
@@ -1289,21 +1386,30 @@ async function startGameServer(profile) {
   return { pid: serverProcess.pid, startedAt: timestamp() };
 }
 
-function stopGameServer() {
-  if (isManagedServerProcessRunning()) {
-    const pid = serverProcess.pid;
-    return beginTask("Stop server process", "taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
+async function restartGameServer(profile) {
+  const runningProcesses = await getRunningDragonwildsProcesses();
+  if (!runningProcesses.length) {
+    return startGameServer(profile);
   }
-  const script = [
-    "$stopped=$false",
-    `foreach ($name in ${psArray(serverExeCandidates)}) {`,
-    "  & taskkill.exe /IM $name /T /F",
-    "  if ($LASTEXITCODE -eq 0) { $stopped=$true }",
-    "}",
-    "if (-not $stopped) { Write-Output 'No Dragonwilds server process was running.' }",
-    "exit 0"
-  ].join("; ");
-  return powershellTask("Stop Dragonwilds server processes", script);
+
+  return gracefulStopDragonwildsTask("Restart Dragonwilds server", {
+    pauseAtEnd: false,
+    onComplete: async ({ exitCode }) => {
+      if (exitCode !== 0) {
+        appendActivity("Restart skipped because Dragonwilds could not be stopped cleanly.");
+        return;
+      }
+      await startGameServer(await getProfile());
+    }
+  });
+}
+
+async function stopGameServer() {
+  const runningProcesses = await getRunningDragonwildsProcesses();
+  if (!runningProcesses.length) {
+    throw new Error("Dragonwilds dedicated server is not running.");
+  }
+  return gracefulStopDragonwildsTask("Stop Dragonwilds server processes");
 }
 
 function openPathDetached(targetPath, selectFile = false) {
@@ -1368,6 +1474,41 @@ async function listBackups(profile) {
   }
 }
 
+function resolveBackupPath(profile, backupId) {
+  const safeName = path.basename(backupId);
+  if (!safeName || safeName !== backupId || !safeName.toLowerCase().endsWith(".zip")) {
+    throw new Error("Invalid backup name.");
+  }
+  const resolvedBackupDir = path.resolve(profile.paths.backupDir);
+  const resolvedBackup = path.resolve(path.join(resolvedBackupDir, safeName));
+  if (resolvedBackupDir !== resolvedBackup && !resolvedBackup.startsWith(`${resolvedBackupDir}${path.sep}`)) {
+    throw new Error("Backup path is outside the configured backup folder.");
+  }
+  return { safeName, resolvedBackup };
+}
+
+async function deleteBackup(profile, backupId) {
+  const { safeName, resolvedBackup } = resolveBackupPath(profile, backupId);
+  if (!exists(resolvedBackup)) {
+    throw new Error(`Backup not found: ${safeName}`);
+  }
+  await fsp.unlink(resolvedBackup);
+  appendActivity(`Deleted backup ${safeName}.`);
+  return { deleted: safeName };
+}
+
+async function pruneBackups(profile) {
+  const keepCount = Number(profile.backups?.retentionCount || defaultProfile.backups.retentionCount);
+  if (!Number.isInteger(keepCount) || keepCount < 1) return [];
+  const backups = await listBackups(profile);
+  const remove = backups.slice(keepCount);
+  for (const backup of remove) {
+    await fsp.unlink(backup.path);
+    appendActivity(`Pruned old backup ${backup.name}; keeping last ${keepCount}.`);
+  }
+  return remove;
+}
+
 async function createBackup(profile) {
   if (!exists(profile.paths.saveDir)) {
     throw new Error(`Save folder not found: ${profile.paths.saveDir}`);
@@ -1382,17 +1523,17 @@ async function createBackup(profile) {
     `New-Item -ItemType Directory -Force -Path ${psString(profile.paths.backupDir)} | Out-Null`,
     `Compress-Archive -LiteralPath ${psString(profile.paths.saveDir)} -DestinationPath ${psString(outPath)} -Force`
   ].join("; ");
-  return powershellTask("Create save backup", script);
+  return powershellTask("Create save backup", script, {
+    onComplete: async ({ exitCode }) => {
+      if (exitCode === 0) {
+        await pruneBackups(await getProfile());
+      }
+    }
+  });
 }
 
 async function restoreBackup(profile, backupId) {
-  const safeName = path.basename(backupId);
-  const backupPath = path.join(profile.paths.backupDir, safeName);
-  const resolvedBackup = path.resolve(backupPath);
-  const resolvedBackupDir = path.resolve(profile.paths.backupDir);
-  if (!resolvedBackup.startsWith(resolvedBackupDir)) {
-    throw new Error("Backup path is outside the configured backup folder.");
-  }
+  const { safeName, resolvedBackup } = resolveBackupPath(profile, backupId);
   if (!exists(resolvedBackup)) {
     throw new Error(`Backup not found: ${safeName}`);
   }
@@ -1430,7 +1571,9 @@ async function getStatus() {
   const profile = await getProfile();
   const steamcmdExe = path.join(profile.paths.steamcmdDir, "steamcmd.exe");
   const install = await detectServerInstall(profile);
+  await pruneBackups(profile);
   const backups = await listBackups(profile);
+  const runningProcesses = await getRunningDragonwildsProcesses();
   pruneActivityLogIfNeeded();
   const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit, { maxAgeMs: logRetentionMs });
   const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit, { maxAgeMs: logRetentionMs });
@@ -1452,8 +1595,9 @@ async function getStatus() {
   return {
     appVersion: appPackage.version,
     generatedAt: timestamp(),
-    serverRunning: isManagedServerProcessRunning(),
-    serverPid: isManagedServerProcessRunning() ? serverProcess.pid : null,
+    serverRunning: runningProcesses.length > 0,
+    serverPid: runningProcesses[0]?.pid || null,
+    serverProcesses: runningProcesses,
     task: taskSnapshot(),
     selectedPort,
     secondaryPort,
@@ -1462,6 +1606,7 @@ async function getStatus() {
     effectiveLaunchArgsText: formatLaunchArgsForDisplay(effectiveLaunchArgs),
     tcpPortOpen,
     logRetentionHours,
+    backupRetentionCount: profile.backups?.retentionCount || defaultProfile.backups.retentionCount,
     configuration: {
       ...configuration,
       iniReady: configuration.ready && configExists,
@@ -1487,7 +1632,7 @@ async function getStatus() {
       log: { path: profile.paths.logPath, exists: exists(profile.paths.logPath) },
       backups: { path: profile.paths.backupDir, exists: exists(profile.paths.backupDir) }
     },
-    backups: backups.slice(0, 8),
+    backups,
     logLines,
     activityLines
   };
@@ -1608,17 +1753,13 @@ async function handleApi(request, response, url) {
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/stop") {
-      sendJson(response, 202, { task: stopGameServer() });
+      sendJson(response, 202, { task: await stopGameServer() });
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/restart") {
-      const profile = await getProfile();
-      if (isManagedServerProcessRunning()) {
-        serverProcess.kill();
-        serverProcess = null;
-      }
-      sendJson(response, 202, { server: await startGameServer(profile) });
+      const result = await restartGameServer(await getProfile());
+      sendJson(response, 202, result?.status ? { task: result } : { server: result });
       return;
     }
 
@@ -1632,8 +1773,24 @@ async function handleApi(request, response, url) {
       return;
     }
 
+    if (request.method === "PUT" && url.pathname === "/api/backups/settings") {
+      const profile = await saveBackupSettings(await readBody(request));
+      sendJson(response, 200, { profile, status: await getStatus() });
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/backups") {
       sendJson(response, 202, { task: await createBackup(await getProfile()) });
+      return;
+    }
+
+    const deleteBackupMatch = url.pathname.match(/^\/api\/backups\/([^/]+)$/);
+    if (request.method === "DELETE" && deleteBackupMatch) {
+      const profile = await getProfile();
+      sendJson(response, 200, {
+        backup: await deleteBackup(profile, decodeURIComponent(deleteBackupMatch[1])),
+        backups: await listBackups(profile)
+      });
       return;
     }
 

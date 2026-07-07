@@ -208,42 +208,31 @@
               <span id="actionHint">Actions run on this Windows server.</span>
             </div>
             <div class="action-grid">
-              <button class="action-button success" data-action="start" data-requires-exe>
+              <button class="action-button success compact-action" data-action="start" data-requires-exe data-requires-stopped>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-play"></use></svg>
                 Start
               </button>
-              <button class="action-button danger" data-action="stop">
+              <button class="action-button danger compact-action" data-action="stop" data-requires-running>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-stop"></use></svg>
                 Stop
               </button>
-              <button class="action-button warm" data-action="restart" data-requires-exe>
+              <button class="action-button warm compact-action" data-action="restart" data-requires-exe data-requires-running>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-restart"></use></svg>
                 Restart
               </button>
-              <button class="action-button" data-action="update" data-requires-installed>
+              <button class="action-button compact-action" data-action="update" data-requires-installed>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-sync"></use></svg>
                 Update Server
               </button>
-              <button class="action-button" data-action="bootstrap-config" data-requires-server-exe>
+              <button class="action-button compact-action" data-action="bootstrap-config" data-requires-server-exe>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-terminal"></use></svg>
                 Generate Config
               </button>
-              <button class="action-button" data-action="backup" data-requires-saves>
+              <button class="action-button compact-action" data-action="backup" data-requires-saves>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-backup"></use></svg>
                 Backup Now
               </button>
             </div>
-          </section>
-
-          <section class="panel health-panel">
-            <div class="panel-heading">
-              <div>
-                <h2>Health Check</h2>
-                <span id="healthLastChecked">Not checked yet</span>
-              </div>
-              <button class="ghost-button" id="runFullCheck">Run Check</button>
-            </div>
-            <div class="health-list" id="healthList"></div>
           </section>
 
           <section class="panel backup-panel">
@@ -319,20 +308,30 @@
               <button class="ghost-button" type="button" data-open-setup>Edit Setup</button>
             </div>
             <div class="action-row">
-              <button class="action-button success" data-action="start" data-requires-exe>
+              <button class="action-button success" data-action="start" data-requires-exe data-requires-stopped>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-play"></use></svg>
                 Start Server
               </button>
-              <button class="action-button danger" data-action="stop">
+              <button class="action-button danger" data-action="stop" data-requires-running>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-stop"></use></svg>
                 Stop Server
               </button>
-              <button class="action-button warm" data-action="restart" data-requires-exe>
+              <button class="action-button warm" data-action="restart" data-requires-exe data-requires-running>
                 <svg class="button-icon" aria-hidden="true"><use href="#icon-restart"></use></svg>
                 Restart Server
               </button>
             </div>
             <div class="details-grid" id="serverDetails"></div>
+          </section>
+          <section class="panel full-panel health-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Health Check</h2>
+                <span id="healthLastChecked">Not checked yet</span>
+              </div>
+              <button class="ghost-button" id="runFullCheck">Run Check</button>
+            </div>
+            <div class="health-list" id="healthList"></div>
           </section>
         </div>
 
@@ -342,6 +341,14 @@
               <h2>Backup Management</h2>
               <button class="primary-button" data-action="backup" data-requires-saves>Backup Now</button>
             </div>
+            <form class="backup-settings" id="backupSettingsForm">
+              <label>
+                <span>Keep last</span>
+                <input id="backupRetentionCount" name="retentionCount" type="number" min="1" max="999" step="1">
+                <span>backups</span>
+              </label>
+              <button class="ghost-button" type="submit">Save</button>
+            </form>
             <div class="backup-table" id="allBackups"></div>
           </section>
         </div>
