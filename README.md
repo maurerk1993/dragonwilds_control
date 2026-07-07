@@ -41,6 +41,8 @@ The app does not treat SteamCMD's early manifest file or partial download files 
 
 If the installed server does not include a Windows config or official Linux template yet, the app launches `RSDragonwildsServer.exe` once so Dragonwilds can create its default config files. Leave that server console open for at least 10 seconds, then close it when the app prompts you. After it closes, the app checks for `DedicatedServer.ini` again and then unlocks setup when a config source is available.
 
+After first setup, use Edit Setup from the Dashboard `DedicatedServer.ini` panel or the Server page to change Owner ID, server names, passwords, or the Game Port. Stop the server before saving these values; Dragonwilds can overwrite config changes made while the server is running.
+
 For MSI packaging:
 
 ```powershell

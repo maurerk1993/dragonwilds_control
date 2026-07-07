@@ -95,7 +95,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.5.5</strong>
+            <strong id="appVersion">0.5.6</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -149,8 +149,8 @@
           <section class="setup-gate" id="setupGate" hidden>
             <div class="gate-icon"><svg class="icon"><use href="#icon-shield"></use></svg></div>
             <div>
-              <strong>Dedicated server setup is required</strong>
-              <p>Dragonwilds will not start until the installed official DedicatedServer.ini is copied into the WindowsServer folder and patched with your Owner ID, Server Name, Default World Name, and Admin Password.</p>
+              <strong id="setupGateTitle">Dedicated server setup is required</strong>
+              <p id="setupGateDescription">Dragonwilds will not start until the installed official DedicatedServer.ini is copied into the WindowsServer folder and patched with your Owner ID, Server Name, Default World Name, and Admin Password.</p>
               <ul class="setup-list" id="setupMissingList"></ul>
             </div>
             <form class="setup-form" id="setupForm">
@@ -182,6 +182,9 @@
               <div class="setup-actions">
                 <button class="action-button success" id="saveSetupGate" type="submit">
                   Save Setup
+                </button>
+                <button class="ghost-button" id="closeSetupGate" type="button" data-close-setup hidden>
+                  Cancel
                 </button>
               </div>
             </form>
@@ -257,7 +260,11 @@
                 <h2>DedicatedServer.ini</h2>
                 <span id="iniFilePath">Config file contents</span>
               </div>
-              <button class="ghost-button" id="refreshIniView" type="button">Refresh</button>
+              <div class="heading-actions">
+                <button class="ghost-button" id="openIniFile" type="button">Open File</button>
+                <button class="ghost-button" type="button" data-open-setup>Edit Setup</button>
+                <button class="ghost-button" id="refreshIniView" type="button">Refresh</button>
+              </div>
             </div>
             <pre class="ini-output" id="iniFileContents">Loading DedicatedServer.ini...</pre>
           </section>
@@ -305,8 +312,11 @@
         <div class="view" id="serverView">
           <section class="panel full-panel">
             <div class="panel-heading">
-              <h2>Server Process</h2>
-              <span>Start, stop, and watch the executable from the control app.</span>
+              <div>
+                <h2>Server Process</h2>
+                <span>Start, stop, and watch the executable from the control app.</span>
+              </div>
+              <button class="ghost-button" type="button" data-open-setup>Edit Setup</button>
             </div>
             <div class="action-row">
               <button class="action-button success" data-action="start" data-requires-exe>

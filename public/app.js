@@ -4,6 +4,7 @@ const state = {
   update: null,
   releaseNotes: null,
   activeView: "dashboard",
+  setupEditorOpen: false,
   refreshTimer: null,
   refreshInFlight: false
 };
@@ -289,8 +290,8 @@ function renderHealth(status) {
   $("#healthList").innerHTML = items
     .map(
       ([name, value]) => `
-        <div class="health-item">
-          <span class="health-name">${escapeHtml(name)}</span>
+        <div class="health-item health-item-${value.className}">
+          <span class="health-name"><span class="health-dot" aria-hidden="true"></span>${escapeHtml(name)}</span>
           <span class="health-value ${value.className}">${escapeHtml(value.text)}</span>
         </div>
       `
@@ -356,16 +357,21 @@ function renderBackups() {
         .map(
           (backup) => `
             <div class="backup-item">
-              <div>
+              <div class="backup-icon" aria-hidden="true">B</div>
+              <div class="backup-copy">
                 <div class="backup-name">${escapeHtml(backup.name)}</div>
                 <div class="backup-meta">${new Date(backup.modifiedAt).toLocaleString()} &middot; ${formatBytes(backup.sizeBytes)}</div>
               </div>
-              <button class="ghost-button" data-restore="${encodeURIComponent(backup.id)}">Restore</button>
             </div>
           `
         )
         .join("")
-    : `<div class="backup-item"><span class="backup-name">No backups yet</span><span class="backup-meta">Use Backup Now after the save folder exists.</span></div>`;
+    : `
+      <div class="backup-empty">
+        <strong>No backups yet</strong>
+        <span>Use Backup Now after the save folder exists.</span>
+      </div>
+    `;
 
   $("#recentBackups").innerHTML = list;
   $("#allBackups").innerHTML = list;
@@ -453,14 +459,25 @@ function renderIniFile(status = state.status) {
   if (!output || !status) return;
   const configPath = status.paths?.config?.path || "DedicatedServer.ini";
   const templatePath = status.paths?.configTemplate?.path || "official Linux DedicatedServer.ini template";
-  setText("iniFilePath", configPath);
+  const openButton = $("#openIniFile");
+  if (openButton) {
+    openButton.disabled = !status.paths?.config?.exists;
+    openButton.title = status.paths?.config?.exists
+      ? `Open ${configPath}`
+      : "DedicatedServer.ini is not available yet.";
+  }
+
   if (status.paths?.config?.exists) {
+    setText("iniFilePath", "Windows config file");
     output.textContent = status.configuration?.iniText || "DedicatedServer.ini is empty.";
   } else if (!isServerInstalled(status)) {
+    setText("iniFilePath", "Install required");
     output.textContent = `DedicatedServer.ini is not available yet.\n\nInstall the Dragonwilds dedicated server first. After SteamCMD places the official config template, the setup prompt can copy and patch it for Windows.\n\nExpected Windows path:\n${configPath}`;
   } else if (status.paths?.configTemplate?.exists) {
+    setText("iniFilePath", "Template ready");
     output.textContent = `Windows DedicatedServer.ini is not in place yet.\n\nSave setup to copy the official installed template and patch your required values before starting the server.\n\nWindows path:\n${configPath}\n\nOfficial template:\n${templatePath}`;
   } else {
+    setText("iniFilePath", "Generate config first");
     output.textContent = `DedicatedServer.ini was not found.\n\nRun Update or Repair so SteamCMD provides the official template, then save setup again. The app will not generate this file from scratch.\n\nExpected Windows path:\n${configPath}\n\nExpected template:\n${templatePath}`;
   }
 }
@@ -588,11 +605,57 @@ function renderSetupGate(status) {
   const installed = isServerInstalled(status);
   const installStillRunning = isInstallOrUpdateTaskActive(status);
   const partialInstall = isServerInstallPartial(status);
-  gate.hidden = !installed || ready || installStillRunning || partialInstall || !hasConfigSource(status);
-  if (ready) return;
-  $("#setupMissingList").innerHTML = configMissingItems(status)
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("");
+  const canOpenSetup = installed && !installStillRunning && !partialInstall && hasConfigSource(status);
+  const setupRequired = !ready;
+  const showEditor = canOpenSetup && (setupRequired || state.setupEditorOpen);
+
+  $$("[data-open-setup]").forEach((button) => {
+    button.disabled = !canOpenSetup;
+    button.title = canOpenSetup
+      ? status.serverRunning
+        ? "Stop the server before saving setup changes."
+        : "Edit setup values and patch DedicatedServer.ini."
+      : "Install the server and generate DedicatedServer.ini before editing setup.";
+  });
+
+  if (!canOpenSetup) {
+    state.setupEditorOpen = false;
+  }
+
+  gate.hidden = !showEditor;
+  gate.classList.toggle("is-ready", ready);
+  if (!showEditor) return;
+
+  setText("setupGateTitle", setupRequired ? "Dedicated server setup is required" : "Edit dedicated server setup");
+  setText(
+    "setupGateDescription",
+    setupRequired
+      ? "Dragonwilds will not start until the installed official DedicatedServer.ini is copied into the WindowsServer folder and patched with your Owner ID, Server Name, Default World Name, and Admin Password."
+      : "Update the saved Owner ID, names, passwords, or Game Port, then save while the server is stopped so the app can patch DedicatedServer.ini."
+  );
+
+  const missingList = $("#setupMissingList");
+  missingList.hidden = !setupRequired;
+  missingList.innerHTML = setupRequired
+    ? configMissingItems(status)
+        .map((item) => `<li>${escapeHtml(item)}</li>`)
+        .join("")
+    : "";
+
+  const closeButton = $("#closeSetupGate");
+  if (closeButton) {
+    closeButton.hidden = setupRequired;
+    closeButton.disabled = taskIsActive();
+  }
+
+  const saveButton = $("#saveSetupGate");
+  if (saveButton) {
+    saveButton.disabled = taskIsActive() || Boolean(status.serverRunning);
+    saveButton.textContent = setupRequired ? "Save Setup" : "Save Changes";
+    saveButton.title = status.serverRunning
+      ? "Stop the server before saving setup changes."
+      : "Save setup and patch DedicatedServer.ini.";
+  }
 }
 
 function renderConsoleControls(status) {
@@ -636,6 +699,9 @@ function readProfileFromForm() {
 }
 
 async function saveSettings() {
+  if (state.status?.serverRunning) {
+    throw new Error("Stop the Dragonwilds server before saving setup changes. The game can overwrite live config edits.");
+  }
   const next = readProfileFromForm();
   const payload = await api("/api/settings", {
     method: "PUT",
@@ -643,6 +709,9 @@ async function saveSettings() {
   });
   state.profile = payload.profile;
   state.status = payload.status;
+  if (isConfigReady(payload.status)) {
+    state.setupEditorOpen = false;
+  }
   renderAll();
   if (payload.status.configuration.lastPatchError) {
     toast(`Setup saved, but DedicatedServer.ini was not patched: ${payload.status.configuration.lastPatchError.message}`);
@@ -713,12 +782,6 @@ async function runAction(action) {
   await refreshStatus();
 }
 
-async function restoreBackup(id) {
-  await api(`/api/backups/${id}/restore`, { method: "POST", body: "{}" });
-  toast("Restore task started. The current save folder will be moved to a safety copy first.");
-  await refreshStatus();
-}
-
 async function sendConsoleInput(input) {
   const payload = await api("/api/tasks/active/input", {
     method: "POST",
@@ -738,6 +801,11 @@ async function stopConsoleTask() {
   toast("Stop requested for the running task.");
   renderStatus();
   renderLogs();
+}
+
+async function openIniFile() {
+  const payload = await api("/api/files/config/open", { method: "POST", body: "{}" });
+  toast(payload.file?.selectedFile ? "Opened DedicatedServer.ini." : "Opened the config folder.");
 }
 
 async function manualHealthCheck(button) {
@@ -788,6 +856,21 @@ function wireEvents() {
       setView(openViewButton.dataset.openView);
     }
 
+    const openSetupButton = event.target.closest("[data-open-setup]");
+    if (openSetupButton) {
+      state.setupEditorOpen = true;
+      setView("dashboard");
+      renderSetupGate(state.status);
+      $("#setupGate")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      $("#setupForm")?.elements.ownerId?.focus();
+    }
+
+    const closeSetupButton = event.target.closest("[data-close-setup]");
+    if (closeSetupButton) {
+      state.setupEditorOpen = false;
+      renderSetupGate(state.status);
+    }
+
     const quitButton = event.target.closest("[data-console-send]");
     if (quitButton) {
       try {
@@ -809,20 +892,6 @@ function wireEvents() {
       }
     }
 
-    const restoreButton = event.target.closest("[data-restore]");
-    if (restoreButton) {
-      const backupId = restoreButton.dataset.restore;
-      const confirmed = confirm("Restore this backup? The current save folder will be moved to a safety copy first.");
-      if (!confirmed) return;
-      try {
-        restoreButton.disabled = true;
-        await restoreBackup(backupId);
-      } catch (error) {
-        toast(error.message);
-      } finally {
-        restoreButton.disabled = false;
-      }
-    }
   });
 
   document.body.addEventListener("submit", async (event) => {
@@ -851,6 +920,13 @@ function wireEvents() {
   $("#refreshIniView").addEventListener("click", () =>
     refreshStatus({ toastOnSuccess: true, toastMessage: "DedicatedServer.ini refreshed." })
   );
+  $("#openIniFile").addEventListener("click", async () => {
+    try {
+      await openIniFile();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
   $("#refreshLogs").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
   $("#checkAppUpdate").addEventListener("click", async () => {
     try {

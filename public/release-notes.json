@@ -1,19 +1,23 @@
 {
-  "version": "0.5.5",
-  "title": "First-run config generation",
+  "version": "0.5.6",
+  "title": "Setup editor and dashboard polish",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Runs the server once after install",
-      "body": "After SteamCMD finishes and the server executable is detected, the app can launch Dragonwilds once so the game can create DedicatedServer.ini."
+      "heading": "Edit setup again",
+      "body": "The Dashboard and Server page now expose Edit Setup so you can change Owner ID, server names, passwords, or Game Port after the first setup."
     },
     {
-      "heading": "10-second close prompt",
-      "body": "The app waits 10 seconds, then tells you to close the server console so the generated config can be patched safely."
+      "heading": "Fresh installs still prompt",
+      "body": "The setup form still appears automatically once a fresh install has a real DedicatedServer.ini or official template ready to patch."
     },
     {
-      "heading": "Setup waits for a config source",
-      "body": "The Owner ID and password setup prompt stays hidden until DedicatedServer.ini or an official template actually exists."
+      "heading": "Safer config saves",
+      "body": "Setup saves are blocked while the managed server process is running so Dragonwilds cannot overwrite live config edits."
+    },
+    {
+      "heading": "Cleaner dashboard",
+      "body": "The DedicatedServer.ini panel now uses Open File instead of showing a long path, health and backup panels are cleaner, and the console summary stays compact in fullscreen."
     }
   ]
 }

@@ -263,6 +263,9 @@ async function getProfile() {
 async function saveProfile(profile) {
   assertValidGamePort(profile?.server?.port ?? defaultProfile.server.port);
   const next = normalizeProfile(profile);
+  if (next.writeIniOnSave && serverProcess && !serverProcess.killed) {
+    throw new Error("Stop the Dragonwilds server before saving setup changes. The game can overwrite live config edits.");
+  }
   await writeJson(profilePath, next);
   serverDetectionCache = null;
   const config = getDedicatedConfigStatus(next);
@@ -1138,6 +1141,43 @@ function stopGameServer() {
   return powershellTask("Stop Dragonwilds server processes", script);
 }
 
+function openPathDetached(targetPath, selectFile = false) {
+  const resolvedTarget = path.resolve(targetPath);
+  if (process.platform === "win32") {
+    const args = selectFile ? [`/select,${resolvedTarget}`] : [resolvedTarget];
+    const child = spawn("explorer.exe", args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false
+    });
+    child.unref();
+    return;
+  }
+
+  const opener = process.platform === "darwin" ? "open" : "xdg-open";
+  const child = spawn(opener, [resolvedTarget], {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+}
+
+async function openDedicatedConfigFile(profile) {
+  const configPath = path.resolve(profile.paths.configPath);
+  if (exists(configPath)) {
+    openPathDetached(configPath, true);
+    return { openedPath: configPath, selectedFile: true };
+  }
+
+  const configDir = path.dirname(configPath);
+  if (exists(configDir)) {
+    openPathDetached(configDir, false);
+    return { openedPath: configDir, selectedFile: false };
+  }
+
+  throw new Error("DedicatedServer.ini does not exist yet. Install the server and generate config first.");
+}
+
 async function listBackups(profile) {
   const backupDir = profile.paths.backupDir;
   try {
@@ -1414,6 +1454,11 @@ async function handleApi(request, response, url) {
         serverProcess = null;
       }
       sendJson(response, 202, { server: await startGameServer(profile) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/files/config/open") {
+      sendJson(response, 202, { file: await openDedicatedConfigFile(await getProfile()) });
       return;
     }
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.6 - Setup editor and dashboard polish
+
+- Added Edit Setup controls on the Dashboard and Server page so saved dedicated-server values can be changed after first setup.
+- Kept the setup form automatic for fresh installs once `DedicatedServer.ini` or the official template exists.
+- Blocked setup saves while the managed Dragonwilds server process is running to avoid live config edits being overwritten.
+- Updated the setup editor copy so required first-run setup and later edits are clearly different states.
+- Replaced the visible `DedicatedServer.ini` path with an Open File action to avoid header clipping.
+- Cleaned up the fullscreen dashboard layout so the console summary no longer stretches into a giant empty panel.
+- Restyled the health and backup panels and removed restore buttons from the backup lists.
+
 ## 0.5.5 - First-run config generation
 
 - Added a first-run config generation task that launches the Dragonwilds server executable once after install when no `DedicatedServer.ini` or official template exists.
