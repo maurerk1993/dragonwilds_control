@@ -69,13 +69,13 @@ The installer path above is recommended. The batch launcher remains available fo
 powershell -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
 ```
 
-## Settings
+## DedicatedServer.ini Configuration
 
-The app writes a local JSON profile and updates `DedicatedServer.ini` when the required official values are present. The server port is editable in the UI and defaults to `7777`.
+The app writes a local JSON profile and updates `DedicatedServer.ini` when the required official values are present. The server port is entered during first-run setup and defaults to `7777`.
 
 Dragonwilds requires the Windows dedicated server config at `RSDragonwilds\Saved\Config\WindowsServer\DedicatedServer.ini`. The app generates that file with `OwnerId`, `ServerName`, `DefaultWorldName`, `AdminPassword`, and optional `WorldPassword`. Stop the server before changing these values because Dragonwilds documentation warns that changes made while the server is running can be lost.
 
-If an existing `DedicatedServer.ini` is already present, the app reads those official values back into the profile so existing installs can be managed without retyping everything.
+The dashboard shows the current raw `DedicatedServer.ini` contents in a read-only viewer. The unfinished Settings page is intentionally hidden until the editing workflow is ready. If an existing `DedicatedServer.ini` is already present, the app reads those official values back into the profile so existing installs can be managed without retyping everything.
 
 ## Backups
 

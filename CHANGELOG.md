@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 - Simplified config surface
+
+- Removed the unfinished Settings page from the sidebar while the configuration workflow is still being shaped.
+- Moved first-run setup fields into the setup prompt so initial installs can still generate the required `DedicatedServer.ini`.
+- Replaced the dashboard server settings form with a read-only viewer that shows the current contents of `DedicatedServer.ini`.
+- Added `DedicatedServer.ini` contents to the app status payload and smoke test coverage.
+
 ## 0.4.0 - Official first-run server setup
 
 - Added a first-run setup prompt for the mandatory Dragonwilds dedicated server values: Owner ID, Server Name, Default World Name, and Admin Password.

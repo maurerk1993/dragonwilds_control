@@ -350,7 +350,6 @@ button:disabled {
 .setup-gate {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 12px 16px;
@@ -360,7 +359,12 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+.install-gate {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .setup-gate {
+  grid-template-columns: auto minmax(0, 1fr);
   border-color: rgba(212, 173, 89, 0.5);
   background: linear-gradient(90deg, rgba(106, 72, 22, 0.94), rgba(42, 33, 23, 0.86));
 }
@@ -396,6 +400,42 @@ button:disabled {
   background: rgba(0, 0, 0, 0.18);
   font-size: 12px;
   font-weight: 750;
+}
+
+.setup-form {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.setup-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.setup-form input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(47, 40, 27, 0.45);
+  border-radius: 4px;
+  padding: 0 10px;
+  background: rgba(255, 250, 235, 0.92);
+  color: var(--ink);
+  outline: none;
+}
+
+.setup-actions {
+  display: flex;
+  align-items: end;
+}
+
+.setup-actions .action-button {
+  width: 100%;
 }
 
 .gate-icon {
@@ -459,7 +499,7 @@ button:disabled {
 }
 
 .actions-panel .action-grid,
-.settings-panel .settings-form,
+.settings-panel .ini-output,
 .logs-panel .log-output,
 .tall-panel .log-output {
   flex: 1 1 auto;
@@ -570,22 +610,6 @@ button:disabled {
   top: 8px;
 }
 
-.settings-form,
-.settings-detail-grid {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  min-height: 0;
-}
-
-.settings-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  background: var(--panel-2);
-  color: var(--ink);
-  overflow: auto;
-}
-
-.settings-form label,
 .stacked label {
   display: grid;
   gap: 6px;
@@ -593,10 +617,8 @@ button:disabled {
   font-weight: 750;
 }
 
-.settings-form input,
 .stacked input,
-.search-input,
-.mapping-table input {
+.search-input {
   width: 100%;
   min-height: 36px;
   border: 1px solid rgba(47, 40, 27, 0.45);
@@ -607,13 +629,16 @@ button:disabled {
   outline: none;
 }
 
-.mapping-table input:disabled {
-  opacity: 0.72;
-  cursor: default;
-}
-
-.settings-form .span-2 {
-  grid-column: span 2;
+.ini-output {
+  width: 100%;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  background: #090b0a;
+  color: #d4e9c6;
+  font: 13px/1.55 Consolas, "Cascadia Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .health-list,
@@ -645,8 +670,7 @@ button:disabled {
 .details-grid,
 .backup-table,
 .deploy-options,
-.update-panel,
-.settings-detail-grid {
+.update-panel {
   background: var(--panel-2);
   color: var(--ink);
 }
@@ -783,8 +807,7 @@ button:disabled {
   min-height: calc(100vh - 130px);
 }
 
-.two-column,
-.settings-detail-grid {
+.two-column {
   grid-template-columns: minmax(280px, 0.75fr) minmax(360px, 1.25fr);
 }
 
@@ -818,24 +841,6 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 22px;
-}
-
-.mapping-table {
-  display: grid;
-  gap: 8px;
-}
-
-.mapping-row {
-  display: grid;
-  grid-template-columns: 0.8fr 1fr 1fr;
-  gap: 8px;
-  align-items: end;
-}
-
-.mapping-row span {
-  font-size: 12px;
-  color: var(--ink-muted);
-  font-weight: 800;
 }
 
 .deploy-options {
@@ -1027,16 +1032,11 @@ button:disabled {
 
   .topbar,
   #dashboardView,
-  .settings-form,
+  .setup-form,
   .two-column,
-  .settings-detail-grid,
   .details-grid,
   .deploy-options {
     grid-template-columns: 1fr;
-  }
-
-  .settings-form .span-2 {
-    grid-column: auto;
   }
 
   .action-grid {

@@ -116,7 +116,7 @@ async function refreshStatus(options = {}) {
     renderBackups();
     renderLogs();
     if (options.toastOnSuccess) {
-      toast("Health check refreshed.");
+      toast(options.toastMessage || "Health check refreshed.");
     }
   } finally {
     state.refreshInFlight = false;
@@ -126,7 +126,6 @@ async function refreshStatus(options = {}) {
 
 function renderAll() {
   renderProfileForm();
-  renderMappings();
   renderStatus();
   renderUpdateState();
   renderBackups();
@@ -175,6 +174,7 @@ function renderStatus() {
   renderServerDetails(status);
   renderInstallMode(status);
   renderSetupGate(status);
+  renderIniFile(status);
   renderConsoleControls(status);
 }
 
@@ -336,67 +336,26 @@ function renderLogs() {
 
 function renderProfileForm() {
   const profile = state.profile;
-  const form = $("#settingsForm");
-  form.ownerId.value = profile.server.ownerId || "";
-  form.serverName.value = profile.server.name;
-  form.worldName.value = profile.server.worldName;
-  form.adminPassword.value = profile.server.adminPassword || "";
-  form.worldPassword.value = profile.server.worldPassword || profile.server.password || "";
-  form.maxPlayers.value = profile.server.maxPlayers;
-  form.port.value = profile.server.port;
-  form.queryPort.value = profile.server.queryPort;
-  form.launchArgs.value = profile.server.launchArgs;
-  form.saveDir.value = profile.paths.saveDir;
-
-  $("#steamcmdDir").value = profile.paths.steamcmdDir;
-  $("#serverDir").value = profile.paths.serverDir;
-  $("#configPath").value = profile.paths.configPath;
-  $("#logPath").value = profile.paths.logPath;
-  $("#backupDir").value = profile.paths.backupDir;
+  const form = $("#setupForm");
+  if (!form) return;
+  form.elements.ownerId.value = profile.server.ownerId || "";
+  form.elements.serverName.value = profile.server.name;
+  form.elements.worldName.value = profile.server.worldName;
+  form.elements.adminPassword.value = profile.server.adminPassword || "";
+  form.elements.worldPassword.value = profile.server.worldPassword || profile.server.password || "";
+  form.elements.port.value = profile.server.port;
 }
 
-function renderMappings() {
-  const mappings = state.profile.iniMappings || {};
-  const rows = Object.entries(mappings)
-    .map(
-      ([field, mapping]) => `
-        <div class="mapping-row" data-field="${escapeHtml(field)}">
-          <span>${escapeHtml(field)}</span>
-          <label>
-            <span>Section</span>
-            <input data-map-section value="${escapeAttr(mapping.section)}" disabled>
-          </label>
-          <label>
-            <span>Key</span>
-            <input data-map-key value="${escapeAttr(mapping.key)}" disabled>
-          </label>
-        </div>
-      `
-    )
-    .join("");
-
-  const customRows = (state.profile.customIniValues || [])
-    .map(
-      (entry, index) => `
-        <div class="mapping-row custom" data-custom-index="${index}">
-          <label>
-            <span>Custom section</span>
-            <input data-custom-section value="${escapeAttr(entry.section || "")}">
-          </label>
-          <label>
-            <span>Custom key</span>
-            <input data-custom-key value="${escapeAttr(entry.key || "")}">
-          </label>
-          <label>
-            <span>Value</span>
-            <input data-custom-value value="${escapeAttr(entry.value || "")}">
-          </label>
-        </div>
-      `
-    )
-    .join("");
-
-  $("#mappingTable").innerHTML = rows + customRows;
+function renderIniFile(status = state.status) {
+  const output = $("#iniFileContents");
+  if (!output || !status) return;
+  const configPath = status.paths?.config?.path || "DedicatedServer.ini";
+  setText("iniFilePath", configPath);
+  if (status.paths?.config?.exists) {
+    output.textContent = status.configuration?.iniText || "DedicatedServer.ini is empty.";
+  } else {
+    output.textContent = `DedicatedServer.ini has not been created yet.\n\nExpected path:\n${configPath}\n\nComplete first-run setup to generate the file.`;
+  }
 }
 
 function renderReleaseNotes() {
@@ -532,41 +491,17 @@ function renderConsoleControls(status) {
 }
 
 function readProfileFromForm() {
-  const form = $("#settingsForm");
+  const form = $("#setupForm");
   const next = structuredClone(state.profile);
-  next.server.ownerId = form.ownerId.value.trim();
-  next.server.name = form.serverName.value.trim();
-  next.server.worldName = form.worldName.value.trim();
-  next.server.adminPassword = form.adminPassword.value;
-  next.server.worldPassword = form.worldPassword.value;
+  if (!form) return next;
+  next.server.ownerId = form.elements.ownerId.value.trim();
+  next.server.name = form.elements.serverName.value.trim();
+  next.server.worldName = form.elements.worldName.value.trim();
+  next.server.adminPassword = form.elements.adminPassword.value;
+  next.server.worldPassword = form.elements.worldPassword.value;
   next.server.password = next.server.worldPassword;
-  next.server.maxPlayers = Number(form.maxPlayers.value || 4);
-  next.server.port = Number(form.port.value || 7777);
-  next.server.queryPort = Number(form.queryPort.value || next.server.port + 1);
-  next.server.launchArgs = form.launchArgs.value.trim();
-  next.paths.saveDir = form.saveDir.value.trim();
-
-  next.paths.steamcmdDir = $("#steamcmdDir").value.trim();
-  next.paths.serverDir = $("#serverDir").value.trim();
-  next.paths.configPath = $("#configPath").value.trim();
-  next.paths.logPath = $("#logPath").value.trim();
-  next.paths.backupDir = $("#backupDir").value.trim();
-
-  $$(".mapping-row[data-field]").forEach((row) => {
-    const field = row.dataset.field;
-    next.iniMappings[field] = {
-      section: row.querySelector("[data-map-section]").value.trim(),
-      key: row.querySelector("[data-map-key]").value.trim()
-    };
-  });
-
-  next.customIniValues = $$(".mapping-row.custom")
-    .map((row) => ({
-      section: row.querySelector("[data-custom-section]").value.trim(),
-      key: row.querySelector("[data-custom-key]").value.trim(),
-      value: row.querySelector("[data-custom-value]").value
-    }))
-    .filter((entry) => entry.section || entry.key || entry.value);
+  next.server.port = Number(form.elements.port.value || 7777);
+  next.server.queryPort = Number(next.server.port) + 1;
 
   return next;
 }
@@ -581,12 +516,12 @@ async function saveSettings() {
   state.status = payload.status;
   renderAll();
   if (!payload.status.configuration.ready) {
-    toast(`Settings saved. Finish required setup before install/start: ${configMissingText(payload.status)}.`);
+    toast(`Setup saved. Finish required setup before install/start: ${configMissingText(payload.status)}.`);
   } else {
     toast(
       payload.status.paths.config.exists
-        ? "Settings saved. DedicatedServer.ini was generated with the official Dragonwilds values."
-        : "Settings saved. DedicatedServer.ini will be generated before install/start."
+        ? "Setup saved. DedicatedServer.ini was generated with the official Dragonwilds values."
+        : "Setup saved. DedicatedServer.ini will be generated before install/start."
     );
   }
 }
@@ -613,7 +548,7 @@ async function runAction(action) {
   }
   if (["install", "start", "restart"].includes(action) && !isConfigReady()) {
     setView("dashboard");
-    $("#settingsForm").ownerId?.focus();
+    $("#setupForm").ownerId?.focus();
     toast(`Complete dedicated server setup before continuing. Missing: ${configMissingText()}.`);
     return;
   }
@@ -758,11 +693,15 @@ function wireEvents() {
     }
   });
 
-  $("#saveSettingsTop").addEventListener("click", saveSettings);
-  $("#saveSetupGate").addEventListener("click", saveSettings);
-  $("#saveSettingsDetail").addEventListener("click", saveSettings);
+  $("#setupForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await saveSettings();
+  });
   $("#runFullCheck").addEventListener("click", (event) => manualHealthCheck(event.currentTarget));
   $("#refreshNow").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
+  $("#refreshIniView").addEventListener("click", () =>
+    refreshStatus({ toastOnSuccess: true, toastMessage: "DedicatedServer.ini refreshed." })
+  );
   $("#refreshLogs").addEventListener("click", () => refreshStatus({ toastOnSuccess: true }));
   $("#checkAppUpdate").addEventListener("click", async () => {
     try {
@@ -784,15 +723,6 @@ function wireEvents() {
     }
   });
   $("#logSearch").addEventListener("input", renderLogs);
-  $("#addCustomIni").addEventListener("click", () => {
-    state.profile.customIniValues = state.profile.customIniValues || [];
-    state.profile.customIniValues.push({
-      section: "/Script/Dominion.DedicatedServerSettings",
-      key: "",
-      value: ""
-    });
-    renderMappings();
-  });
 }
 
 wireEvents();

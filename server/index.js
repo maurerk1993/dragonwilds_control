@@ -175,6 +175,15 @@ async function readDedicatedServerIniValues(configPath) {
   };
 }
 
+async function readDedicatedServerIniText(configPath) {
+  try {
+    return await fsp.readFile(configPath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return "";
+    return `Could not read DedicatedServer.ini: ${error.message}`;
+  }
+}
+
 async function hydrateProfileFromIni(profile) {
   const next = normalizeProfile(profile);
   const iniValues = await readDedicatedServerIniValues(next.paths.configPath);
@@ -818,6 +827,7 @@ async function getStatus() {
   const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit);
   const tcpPortOpen = await checkTcpPort(profile.server.port);
   const configuration = getDedicatedConfigStatus(profile);
+  const configText = await readDedicatedServerIniText(profile.paths.configPath);
 
   return {
     appVersion: appPackage.version,
@@ -827,7 +837,10 @@ async function getStatus() {
     task: taskSnapshot(),
     selectedPort: Number(profile.server.port),
     tcpPortOpen,
-    configuration,
+    configuration: {
+      ...configuration,
+      iniText: configText
+    },
     paths: {
       steamcmd: { path: steamcmdExe, exists: exists(steamcmdExe) },
       serverDir: { path: profile.paths.serverDir, exists: install.serverDirExists },
@@ -1016,7 +1029,8 @@ async function serveStatic(request, response, url) {
   try {
     const data = await fsp.readFile(filePath);
     response.writeHead(200, {
-      "Content-Type": contentTypes[path.extname(filePath)] || "application/octet-stream"
+      "Content-Type": contentTypes[path.extname(filePath)] || "application/octet-stream",
+      "Cache-Control": "no-store"
     });
     response.end(data);
   } catch (error) {

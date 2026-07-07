@@ -1,19 +1,19 @@
 {
-  "version": "0.4.0",
-  "title": "Official first-run server setup",
+  "version": "0.4.1",
+  "title": "Simplified config surface",
   "date": "2026-07-06",
   "notes": [
     {
-      "heading": "First install now asks for required server info",
-      "body": "Before install or start, the app now prompts for your Dragonwilds Owner ID, Server Name, Default World Name, and Admin Password so the dedicated server can actually boot."
+      "heading": "Settings page removed for now",
+      "body": "The unfinished Settings page has been removed from the sidebar so the app stays focused on the parts that are ready to use."
     },
     {
-      "heading": "DedicatedServer.ini is generated correctly",
-      "body": "The app writes the official WindowsServer DedicatedServer.ini section and keys for you, including the optional World Password when you choose to set one."
+      "heading": "Dashboard shows DedicatedServer.ini",
+      "body": "The Server Configuration panel now shows the current DedicatedServer.ini contents directly, giving admins a simple read-only view while richer editing is built later."
     },
     {
-      "heading": "Existing configs are detected",
-      "body": "If your server already has a DedicatedServer.ini, the app reads the official values from it so Health Check does not falsely report setup as missing."
+      "heading": "First-run setup still works",
+      "body": "Required first-install fields now live in the setup prompt, so new servers can still generate the official config file before install or start."
     }
   ]
 }

@@ -17,9 +17,6 @@
       <symbol id="icon-server" viewBox="0 0 24 24">
         <path d="M5 3h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm0 12h14a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2Zm2-8v2h2V7zm0 10v2h2v-2z"></path>
       </symbol>
-      <symbol id="icon-settings" viewBox="0 0 24 24">
-        <path d="M10.6 2h2.8l.5 2.6 1.6.7 2.2-1.5 2 2-1.5 2.2.7 1.6 2.6.5v2.8l-2.6.5-.7 1.6 1.5 2.2-2 2-2.2-1.5-1.6.7-.5 2.6h-2.8l-.5-2.6-1.6-.7-2.2 1.5-2-2L5.8 15l-.7-1.6-2.6-.5v-2.8l2.6-.5.7-1.6-1.5-2.2 2-2 2.2 1.5 1.6-.7zm1.4 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"></path>
-      </symbol>
       <symbol id="icon-backup" viewBox="0 0 24 24">
         <path d="M4 5h16v4H4zM4 10h16v4H4zM4 15h16v4H4zM7 6.5v1h10v-1zm0 5v1h10v-1zm0 5v1h10v-1z"></path>
       </symbol>
@@ -78,10 +75,6 @@
             <span class="nav-icon"><svg class="icon"><use href="#icon-server"></use></svg></span>
             <span>Server</span>
           </button>
-          <button class="nav-item" data-view="settings">
-            <span class="nav-icon"><svg class="icon"><use href="#icon-settings"></use></svg></span>
-            <span>Settings</span>
-          </button>
           <button class="nav-item" data-view="backups">
             <span class="nav-icon"><svg class="icon"><use href="#icon-backup"></use></svg></span>
             <span>Backups</span>
@@ -99,7 +92,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.4.0</strong>
+            <strong id="appVersion">0.4.1</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -157,9 +150,37 @@
               <p>Dragonwilds will not start until the official Owner ID, Server Name, Default World Name, and Admin Password are written to DedicatedServer.ini.</p>
               <ul class="setup-list" id="setupMissingList"></ul>
             </div>
-            <button class="action-button success" id="saveSetupGate" type="button">
-              Save Setup
-            </button>
+            <form class="setup-form" id="setupForm">
+              <label>
+                <span>Owner ID</span>
+                <input name="ownerId" autocomplete="off" placeholder="RuneScape: Dragonwilds Player ID" required>
+              </label>
+              <label>
+                <span>Server Name</span>
+                <input name="serverName" autocomplete="off" required>
+              </label>
+              <label>
+                <span>Default World Name</span>
+                <input name="worldName" autocomplete="off" required>
+              </label>
+              <label>
+                <span>Admin Password</span>
+                <input name="adminPassword" type="password" autocomplete="new-password" required>
+              </label>
+              <label>
+                <span>World Password (Optional)</span>
+                <input name="worldPassword" type="password" autocomplete="new-password">
+              </label>
+              <label>
+                <span>Server Port</span>
+                <input name="port" type="number" min="1" max="65535">
+              </label>
+              <div class="setup-actions">
+                <button class="action-button success" id="saveSetupGate" type="submit">
+                  Save Setup
+                </button>
+              </div>
+            </form>
           </section>
 
           <section class="install-gate" id="installGate" hidden>
@@ -224,51 +245,13 @@
 
           <section class="panel settings-panel">
             <div class="panel-heading">
-              <h2>Server Configuration</h2>
-              <button class="primary-button" id="saveSettingsTop">Save Settings</button>
+              <div>
+                <h2>DedicatedServer.ini</h2>
+                <span id="iniFilePath">Config file contents</span>
+              </div>
+              <button class="ghost-button" id="refreshIniView" type="button">Refresh</button>
             </div>
-            <form class="settings-form" id="settingsForm">
-              <label class="span-2">
-                <span>Owner ID</span>
-                <input name="ownerId" autocomplete="off" placeholder="RuneScape: Dragonwilds Player ID" required>
-              </label>
-              <label>
-                <span>Server Name</span>
-                <input name="serverName" autocomplete="off" required>
-              </label>
-              <label>
-                <span>Default World Name</span>
-                <input name="worldName" autocomplete="off" required>
-              </label>
-              <label>
-                <span>Admin Password</span>
-                <input name="adminPassword" type="password" autocomplete="new-password" required>
-              </label>
-              <label>
-                <span>World Password (Optional)</span>
-                <input name="worldPassword" type="password" autocomplete="new-password">
-              </label>
-              <label>
-                <span>Max Players</span>
-                <input name="maxPlayers" type="number" min="1" max="128">
-              </label>
-              <label>
-                <span>Server Port</span>
-                <input name="port" type="number" min="1" max="65535">
-              </label>
-              <label>
-                <span>Query Port</span>
-                <input name="queryPort" type="number" min="1" max="65535">
-              </label>
-              <label class="span-2">
-                <span>Launch Args</span>
-                <input name="launchArgs" autocomplete="off">
-              </label>
-              <label class="span-2">
-                <span>World Save Path</span>
-                <input name="saveDir" autocomplete="off">
-              </label>
-            </form>
+            <pre class="ini-output" id="iniFileContents">Loading DedicatedServer.ini...</pre>
           </section>
 
           <section class="panel logs-panel">
@@ -344,33 +327,6 @@
               </button>
             </div>
             <div class="details-grid" id="serverDetails"></div>
-          </section>
-        </div>
-
-        <div class="view" id="settingsView">
-          <section class="panel full-panel">
-            <div class="panel-heading">
-              <h2>Settings And Official INI</h2>
-              <button class="primary-button" id="saveSettingsDetail">Save Settings</button>
-            </div>
-            <p class="help-text">
-              The app writes the official WindowsServer DedicatedServer.ini section with OwnerId, ServerName, DefaultWorldName, AdminPassword, and optional WorldPassword. Add custom values only for advanced overrides you intentionally want to append.
-            </p>
-            <div class="settings-detail-grid">
-              <div class="stacked">
-                <h3>Paths</h3>
-                <label><span>SteamCMD Folder</span><input id="steamcmdDir"></label>
-                <label><span>Server Folder</span><input id="serverDir"></label>
-                <label><span>DedicatedServer.ini</span><input id="configPath"></label>
-                <label><span>Log File</span><input id="logPath"></label>
-                <label><span>Backup Folder</span><input id="backupDir"></label>
-              </div>
-              <div class="stacked">
-                <h3>INI Keys</h3>
-                <div class="mapping-table" id="mappingTable"></div>
-                <button class="ghost-button" id="addCustomIni" type="button">Add Custom INI Value</button>
-              </div>
-            </div>
           </section>
         </div>
 

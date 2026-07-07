@@ -80,8 +80,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.4.0") {
-    throw new Error(`Expected version 0.4.0, got ${app.version}`);
+  if (app.version !== "0.4.1") {
+    throw new Error(`Expected version 0.4.1, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
@@ -160,6 +160,9 @@ async function main() {
   if (!status.configuration.ready || !status.paths.config.exists) {
     throw new Error("Status did not report a ready generated DedicatedServer.ini.");
   }
+  if (!status.configuration.iniText || !status.configuration.iniText.includes("OwnerId=0002ff274ad9459abebf9ca7f3bed3cb")) {
+    throw new Error("Status did not include the DedicatedServer.ini contents.");
+  }
   if (!status.paths.serverInstall.installed) {
     throw new Error("Status did not detect the fake dedicated server install.");
   }
@@ -177,8 +180,11 @@ async function main() {
   if (!page.includes("Dragonwilds Server Control")) {
     throw new Error("Dashboard HTML did not load.");
   }
-  if (!page.includes("data-console-form") || !page.includes("icon-restart")) {
-    throw new Error("Dashboard HTML is missing live console or SVG icon markup.");
+  if (!page.includes("data-console-form") || !page.includes("icon-restart") || !page.includes("iniFileContents")) {
+    throw new Error("Dashboard HTML is missing live console, SVG icon, or INI viewer markup.");
+  }
+  if (page.includes('data-view="settings"') || page.includes('id="settingsView"')) {
+    throw new Error("Settings page markup should not be present.");
   }
 
   console.log("Smoke test passed.");
