@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 - Visible install command window
+
+- Changed PowerShell-backed tasks so install, update, repair, backup, restore, and stop actions launch through a real external `cmd.exe` window on Windows.
+- Kept the external task window open at the end with a prompt so admins can read the final SteamCMD or PowerShell result before closing it.
+- Updated in-app console status copy so admins know to use the external command window for live output and input.
+
 ## 0.5.1 - Game port launch control
 
 - Changed server start so the saved Game Port is passed to Dragonwilds as `-port=<port>`.

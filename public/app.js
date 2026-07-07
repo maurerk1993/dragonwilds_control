@@ -344,7 +344,7 @@ function buildConsoleLines(status = state.status) {
   const task = status?.task;
   const taskLines = task
     ? [
-        `[TASK] ${task.name} - ${task.status}${task.outputLineCount ? ` (${task.outputLineCount} retained lines)` : ""}${task.externalWindow ? " - external window requested" : ""}`,
+        `[TASK] ${task.name} - ${task.status}${task.outputLineCount ? ` (${task.outputLineCount} retained lines)` : ""}${task.externalWindow ? " - external command window opened" : ""}`,
         ...(task.recentOutput || []).map((line) => `[TASK] ${line}`)
       ]
     : [];
@@ -371,7 +371,7 @@ function renderConsoleSummary(status = state.status) {
   if (summary) {
     summary.innerHTML = [
       statCard("Task", active ? `${task.name} (${task.status})` : "No running task"),
-      statCard("Window", task?.externalWindow ? "External command window" : "None active"),
+      statCard("Window", task?.externalWindow ? "External command window opened" : "None active"),
       statCard("Retained", `${status?.logRetentionHours || 72} hours`),
       statCard("Lines", String(buildConsoleLines(status).length))
     ].join("");
@@ -382,7 +382,7 @@ function renderConsoleSummary(status = state.status) {
     meta.innerHTML = [
       statCard("Task", active ? `${task.name} (${task.status})` : "No running task"),
       statCard("Console Input", task?.canReceiveInput ? "Ready" : "Not available"),
-      statCard("Window", task?.externalWindow ? "External command window" : "None active"),
+      statCard("Window", task?.externalWindow ? "External command window opened" : "None active"),
       statCard("Retention", `${status?.logRetentionHours || 72} hours`)
     ].join("");
   }
@@ -564,7 +564,7 @@ function renderConsoleControls(status) {
   });
   $$("[data-console-state]").forEach((element) => {
     element.textContent = active
-      ? `${task.name} is ${task.status}; console input ${canSend ? "ready" : "not available"}`
+      ? `${task.name} is ${task.status}; ${task.externalWindow ? "use the external command window for input" : `console input ${canSend ? "ready" : "not available"}`}`
       : "No running console task";
   });
 }

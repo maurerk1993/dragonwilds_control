@@ -1,19 +1,19 @@
 {
-  "version": "0.5.1",
-  "title": "Game port launch control",
+  "version": "0.5.2",
+  "title": "Visible install command window",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Game Port now controls launch",
-      "body": "The setup Game Port is now passed to Dragonwilds as the documented -port value, so changing it actually changes the port used when the server starts."
+      "heading": "Install opens outside the app",
+      "body": "Install, update, repair, backup, restore, and stop tasks now launch in a real external command window so you can watch SteamCMD and PowerShell output directly."
     },
     {
-      "heading": "Secondary Port is clearer",
-      "body": "The app now derives and shows the Secondary Port as Game Port + 1, making it easier to know which two UDP ports need forwarding."
+      "heading": "Window stays readable",
+      "body": "The external command window pauses at the end of the task so you can read the final SteamCMD result before closing it."
     },
     {
-      "heading": "Safer custom launch args",
-      "body": "Any stale custom -port value is replaced with the saved Game Port, while other launch flags like -log and -NewConsole are preserved."
+      "heading": "Clearer in-app status",
+      "body": "The Console tab now tells you when a separate command window is active and points input back to that window."
     }
   ]
 }

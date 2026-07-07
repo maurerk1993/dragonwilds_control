@@ -80,8 +80,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.1") {
-    throw new Error(`Expected version 0.5.1, got ${app.version}`);
+  if (app.version !== "0.5.2") {
+    throw new Error(`Expected version 0.5.2, got ${app.version}`);
   }
 
   const profile = await requestJson("/api/settings");
@@ -267,6 +267,9 @@ async function main() {
   }
   if (!page.includes("data-console-form") || !page.includes("icon-restart") || !page.includes("iniFileContents")) {
     throw new Error("Dashboard HTML is missing console form, SVG icon, or INI viewer markup.");
+  }
+  if (!page.includes("Use the external command window for install/update input")) {
+    throw new Error("Dashboard HTML is missing the external command window console guidance.");
   }
   if (!page.includes("Game Port") || !page.includes("Secondary Port") || !page.includes('max="65534"')) {
     throw new Error("Dashboard HTML is missing Game Port or Secondary Port setup guidance.");

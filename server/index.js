@@ -674,11 +674,34 @@ function taskSnapshot() {
     exitCode: activeTask.exitCode,
     externalWindow: Boolean(activeTask.externalWindow),
     canReceiveInput:
+      activeTask.acceptsInput &&
       ["running", "stopping"].includes(activeTask.status) &&
       Boolean(activeTask.child?.stdin && !activeTask.child.stdin.destroyed),
     outputLineCount: activeTask.output.length,
     recentOutput: activeTask.output.slice(-taskOutputSnapshotLimit)
   };
+}
+
+function safeTaskFileName(name) {
+  return String(name || "task")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "task";
+}
+
+function safeWindowTitle(name) {
+  return `Dragonwilds Server Control - ${String(name || "Task").replace(/["&<>|]/g, "")}`.slice(0, 120);
+}
+
+function removeQuietly(filePath) {
+  try {
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {
+    // Temporary task scripts are best-effort cleanup.
+  }
 }
 
 function pushTaskOutput(task, line) {
@@ -720,15 +743,27 @@ function beginTask(name, command, args, options = {}) {
     output: [],
     outputBuffer: "",
     child: null,
-    externalWindow: process.platform === "win32" && options.showWindow !== false
+    acceptsInput: options.acceptsInput !== false,
+    externalWindow: Boolean(options.externalWindow)
   };
   activeTask = task;
-  appendActivity(`Task started: ${name}${task.externalWindow ? " (external command window requested)" : ""}`);
+  appendActivity(`Task started: ${name}${task.externalWindow ? " (external command window opened)" : ""}`);
 
-  const { showWindow, ...spawnOptions } = options;
+  for (const line of options.initialOutput || []) {
+    pushTaskOutput(task, line);
+  }
+
+  const {
+    acceptsInput,
+    cleanupPaths,
+    externalWindow,
+    initialOutput,
+    windowsHide,
+    ...spawnOptions
+  } = options;
   const child = spawn(command, args, {
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: process.platform === "win32" ? !task.externalWindow : true,
+    stdio: [task.acceptsInput ? "pipe" : "ignore", "pipe", "pipe"],
+    windowsHide: process.platform === "win32" ? (windowsHide ?? !task.externalWindow) : true,
     ...spawnOptions
   });
   task.child = child;
@@ -740,6 +775,7 @@ function beginTask(name, command, args, options = {}) {
     task.finishedAt = timestamp();
     pushTaskOutput(task, error.message);
     appendActivity(`Task failed to start: ${name}: ${error.message}`);
+    for (const filePath of cleanupPaths || []) removeQuietly(filePath);
   });
   child.on("close", (exitCode) => {
     if (task.outputBuffer.trim()) {
@@ -751,6 +787,7 @@ function beginTask(name, command, args, options = {}) {
     task.finishedAt = timestamp();
     serverDetectionCache = null;
     appendActivity(`Task finished: ${name} (exit ${exitCode})`);
+    for (const filePath of cleanupPaths || []) removeQuietly(filePath);
   });
 
   return taskSnapshot();
@@ -797,6 +834,10 @@ function stopActiveTask() {
 }
 
 function powershellTask(name, script) {
+  if (process.platform === "win32") {
+    return windowsExternalPowerShellTask(name, script);
+  }
+
   return beginTask(name, "powershell.exe", [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -804,6 +845,49 @@ function powershellTask(name, script) {
     "-Command",
     script
   ]);
+}
+
+function windowsExternalPowerShellTask(name, script) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const taskSlug = `${Date.now()}-${safeTaskFileName(name)}`;
+  const ps1Path = path.join(dataDir, `${taskSlug}.ps1`);
+  const cmdPath = path.join(dataDir, `${taskSlug}.cmd`);
+  const title = safeWindowTitle(name);
+  const ps1 = [
+    "$ErrorActionPreference = 'Stop'",
+    `$Host.UI.RawUI.WindowTitle = ${psString(title)}`,
+    script
+  ].join(os.EOL);
+  const cmd = [
+    "@echo off",
+    `title ${title}`,
+    "echo Dragonwilds Server Control",
+    `echo Task: ${name.replace(/[&<>|]/g, "")}`,
+    "echo.",
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${ps1Path}"`,
+    "set DWSC_EXIT=%ERRORLEVEL%",
+    "echo.",
+    "echo Task finished with exit code %DWSC_EXIT%.",
+    "echo Close this window or press any key to return to Dragonwilds Server Control.",
+    "pause >nul",
+    "exit /b %DWSC_EXIT%"
+  ].join(os.EOL);
+
+  fs.writeFileSync(ps1Path, ps1, "utf8");
+  fs.writeFileSync(cmdPath, cmd, "utf8");
+
+  const startCommand = `start "${title}" /wait cmd.exe /d /s /c "${cmdPath}"`;
+  return beginTask(name, "cmd.exe", ["/d", "/s", "/c", startCommand], {
+    acceptsInput: false,
+    cleanupPaths: [ps1Path, cmdPath],
+    externalWindow: true,
+    initialOutput: [
+      `Opened a separate command window for ${name}.`,
+      "Watch the external command window for live SteamCMD/PowerShell output and prompts.",
+      "The app will mark this task finished after that window is closed or you press a key at the end."
+    ],
+    windowsHide: true
+  });
 }
 
 function psString(value) {

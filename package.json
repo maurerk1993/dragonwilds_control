@@ -1,6 +1,6 @@
 {
   "name": "dragonwilds-control",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Windows 11 local control panel for a RuneScape: Dragonwilds dedicated server.",
   "author": "MaurerK",
