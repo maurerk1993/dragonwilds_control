@@ -18,6 +18,7 @@ const appPackage = require("../package.json");
 const host = process.env.DWSC_HOST || "127.0.0.1";
 const port = Number(process.env.DWSC_PORT || process.env.PORT || 8787);
 const noOpen = process.env.DWSC_NO_OPEN === "1";
+const ignoreExternalServerProcess = process.env.DWSC_TEST_IGNORE_EXTERNAL_SERVER_PROCESS === "1";
 const dataDir = path.resolve(process.env.DWSC_DATA_DIR || path.join(appRoot, "data"));
 const profilePath = path.join(dataDir, "profile.json");
 const activityLogPath = path.join(dataDir, "activity.log");
@@ -33,7 +34,10 @@ const serverExeCandidates = [
   "RSDragonwildsServer.exe",
   "RSDragonwilds.exe"
 ];
-const serverProcessNames = serverExeCandidates.map((fileName) => path.basename(fileName, path.extname(fileName)));
+const serverProcessNames = [
+  ...serverExeCandidates.map((fileName) => path.basename(fileName, path.extname(fileName))),
+  "RSDragonwildsServer-Win64-Shipping"
+];
 const taskOutputLimit = 12000;
 const taskOutputSnapshotLimit = 4000;
 const activityLogSnapshotLimit = 8000;
@@ -1074,6 +1078,9 @@ function runProcessCapture(command, args, options = {}) {
 
 async function getRunningDragonwildsProcesses() {
   const managedPid = isManagedServerProcessRunning() ? serverProcess.pid : null;
+  if (ignoreExternalServerProcess) {
+    return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
+  }
   if (process.platform !== "win32") {
     return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
   }
@@ -1085,6 +1092,9 @@ async function getRunningDragonwildsProcesses() {
     "  foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {",
     "    $items += [PSCustomObject]@{ Id = $process.Id; ProcessName = $process.ProcessName; Path = $process.Path }",
     "  }",
+    "}",
+    "foreach ($process in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like '*Dragonwilds*Server*' })) {",
+    "  $items += [PSCustomObject]@{ Id = $process.Id; ProcessName = $process.ProcessName; Path = $process.Path }",
     "}",
     "$items | Sort-Object -Property Id -Unique | ConvertTo-Json -Compress"
   ].join("; ");

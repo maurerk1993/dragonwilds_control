@@ -566,6 +566,7 @@ function renderInstallMode(status) {
   const savesReady = hasSaveFolder(status);
   const configReady = isConfigReady(status);
   const setupValuesReady = hasRequiredSetupValues(status);
+  const activeTask = taskIsActive();
   $("#installGate").hidden = installed;
 
   $$("[data-show-when-missing]").forEach((element) => {
@@ -574,28 +575,29 @@ function renderInstallMode(status) {
   $$("[data-show-when-installed]").forEach((element) => {
     element.hidden = !installed;
   });
-  $$("[data-requires-installed]").forEach((element) => {
-    element.disabled = !installed || taskIsActive();
-  });
-  $$("[data-requires-exe]").forEach((element) => {
-    element.disabled = !executableReady || !configReady || taskIsActive();
-  });
-  $$("[data-requires-running]").forEach((element) => {
-    element.disabled = element.disabled || !status.serverRunning || taskIsActive();
-  });
-  $$("[data-requires-stopped]").forEach((element) => {
-    element.disabled = Boolean(status.serverRunning) || element.disabled || taskIsActive();
-  });
-  $$("[data-requires-server-exe]").forEach((element) => {
-    element.disabled = !executableReady || hasConfigSource(status) || taskIsActive();
-  });
-  $$("[data-requires-saves]").forEach((element) => {
-    element.disabled = !savesReady || taskIsActive();
+  $$(
+    [
+      "[data-requires-installed]",
+      "[data-requires-exe]",
+      "[data-requires-running]",
+      "[data-requires-stopped]",
+      "[data-requires-server-exe]",
+      "[data-requires-saves]"
+    ].join(",")
+  ).forEach((element) => {
+    let disabled = activeTask;
+    if (element.matches("[data-requires-installed]")) disabled ||= !installed;
+    if (element.matches("[data-requires-exe]")) disabled ||= !executableReady || !configReady;
+    if (element.matches("[data-requires-running]")) disabled ||= !status.serverRunning;
+    if (element.matches("[data-requires-stopped]")) disabled ||= Boolean(status.serverRunning);
+    if (element.matches("[data-requires-server-exe]")) disabled ||= !executableReady || hasConfigSource(status);
+    if (element.matches("[data-requires-saves]")) disabled ||= !savesReady;
+    element.disabled = disabled;
   });
 
   const installButtons = $$("[data-action='install']");
   installButtons.forEach((button) => {
-    button.disabled = taskIsActive() && !button.hidden;
+    button.disabled = activeTask && !button.hidden;
   });
 
   const help = $("#installModeHelp");

@@ -12,6 +12,7 @@ const child = spawn(process.execPath, ["server/index.js"], {
     ...process.env,
     DWSC_NO_OPEN: "1",
     DWSC_PORT: String(port),
+    DWSC_TEST_IGNORE_EXTERNAL_SERVER_PROCESS: "1",
     DWSC_DATA_DIR: path.join(root, ".runtime-test")
   },
   stdio: ["ignore", "pipe", "pipe"],
@@ -80,8 +81,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.8") {
-    throw new Error(`Expected version 0.5.8, got ${app.version}`);
+  if (app.version !== "0.5.9") {
+    throw new Error(`Expected version 0.5.9, got ${app.version}`);
   }
 
   const serverSource = await fs.readFile(path.join(root, "server", "index.js"), "utf8");
@@ -117,6 +118,15 @@ async function main() {
   }
   if (!appSource.includes("Update workflow started")) {
     throw new Error("Update action should describe the stop-update-restart workflow.");
+  }
+  if (appSource.includes("element.disabled || !status.serverRunning")) {
+    throw new Error("Server running controls must recalculate from status instead of latching a previous disabled state.");
+  }
+  if (
+    !serverSource.includes("RSDragonwildsServer-Win64-Shipping") ||
+    !serverSource.includes("$_.ProcessName -like '*Dragonwilds*Server*'")
+  ) {
+    throw new Error("Server process detection should include Dragonwilds shipping/server child processes.");
   }
 
   const profile = await requestJson("/api/settings");

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.9 - Running server control fix
+
+- Fixed Stop and Restart buttons staying disabled after the server transitions from stopped to running.
+- Broadened Dragonwilds process detection to include the shipping server child process.
+
 ## 0.5.8 - Dashboard and backup management polish
 
 - Redesigned the dashboard with a cleaner compact layout and smaller Quick Actions.
