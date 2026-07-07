@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
 const { spawn } = require("child_process");
+const { _internal } = require("../server/index");
 
 const root = path.resolve(__dirname, "..");
 const port = 8897;
@@ -81,8 +82,74 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.9") {
-    throw new Error(`Expected version 0.5.9, got ${app.version}`);
+  if (app.version !== "0.5.10") {
+    throw new Error(`Expected version 0.5.10, got ${app.version}`);
+  }
+
+  const processDetectionProfile = {
+    paths: {
+      serverDir: path.join(root, ".runtime-test", "server")
+    }
+  };
+  if (
+    _internal.isLikelyDragonwildsServerProcess(
+      { pid: 1234, name: "Dragonwilds Server Control", path: null },
+      processDetectionProfile
+    )
+  ) {
+    throw new Error("Process detection should not count Dragonwilds Server Control as the dedicated server.");
+  }
+  if (
+    _internal.isLikelyDragonwildsServerProcess(
+      {
+        pid: 1235,
+        name: "Dragonwilds Server Control",
+        path: path.join(root, "Dragonwilds Server Control.exe")
+      },
+      processDetectionProfile
+    )
+  ) {
+    throw new Error("Process detection should reject the control app even when Windows reports its path.");
+  }
+  if (
+    !_internal.isLikelyDragonwildsServerProcess(
+      { pid: 1236, name: "RSDragonwildsServer-Win64-Shipping", path: null },
+      processDetectionProfile
+    )
+  ) {
+    throw new Error("Process detection should still count the known Dragonwilds server child process.");
+  }
+  if (
+    _internal.isLikelyDragonwildsServerProcess(
+      { pid: 1237, name: "Custom Dragonwilds Dedicated Server", path: null },
+      processDetectionProfile
+    )
+  ) {
+    throw new Error("Process detection should not count broad Dragonwilds server matches without a server-folder path.");
+  }
+  if (
+    !_internal.isLikelyDragonwildsServerProcess(
+      {
+        pid: 1238,
+        name: "Custom Dragonwilds Dedicated Server",
+        path: path.join(processDetectionProfile.paths.serverDir, "Binaries", "Win64", "Custom Dragonwilds Dedicated Server.exe")
+      },
+      processDetectionProfile
+    )
+  ) {
+    throw new Error("Process detection should count broad Dragonwilds server matches inside the server folder.");
+  }
+  if (
+    _internal.isLikelyDragonwildsServerProcess(
+      {
+        pid: 1239,
+        name: "Custom Dragonwilds Dedicated Server",
+        path: path.join(root, "unrelated", "Custom Dragonwilds Dedicated Server.exe")
+      },
+      processDetectionProfile
+    )
+  ) {
+    throw new Error("Process detection should reject broad Dragonwilds server matches outside the server folder.");
   }
 
   const serverSource = await fs.readFile(path.join(root, "server", "index.js"), "utf8");

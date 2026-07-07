@@ -1,23 +1,19 @@
 {
-  "version": "0.5.7",
-  "title": "Safer server updates",
+  "version": "0.5.10",
+  "title": "Accurate server process detection",
   "date": "2026-07-07",
   "notes": [
     {
-      "heading": "Update now stops first",
-      "body": "The Update Server action now stops Dragonwilds before SteamCMD updates the server files, so locked files are much less likely to block the update."
+      "heading": "No false online state",
+      "body": "The app no longer counts Dragonwilds Server Control itself as the dedicated server after a reboot."
     },
     {
-      "heading": "Restarts only when expected",
-      "body": "If the server was running before the update, the app starts it again when SteamCMD finishes. If it was offline, it stays offline."
+      "heading": "Smarter process matching",
+      "body": "Known Dragonwilds server processes are still detected, while broader matches now need to come from the configured server folder."
     },
     {
-      "heading": "Graceful shutdown path",
-      "body": "The app now tries to quit the managed server cleanly before falling back to Windows process shutdown, with force shutdown reserved for timeout cases."
-    },
-    {
-      "heading": "Clearer update status",
-      "body": "The dashboard now labels updates as a workflow so it is clearer that stop, SteamCMD update, and optional restart can happen as separate steps."
+      "heading": "Regression coverage",
+      "body": "Smoke tests now cover the control-app false positive and the expected Dragonwilds server process cases."
     }
   ]
 }

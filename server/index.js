@@ -38,6 +38,7 @@ const serverProcessNames = [
   ...serverExeCandidates.map((fileName) => path.basename(fileName, path.extname(fileName))),
   "RSDragonwildsServer-Win64-Shipping"
 ];
+const serverProcessNameSet = new Set(serverProcessNames.map((name) => name.toLowerCase()));
 const taskOutputLimit = 12000;
 const taskOutputSnapshotLimit = 4000;
 const activityLogSnapshotLimit = 8000;
@@ -1054,6 +1055,47 @@ function isManagedServerProcessRunning() {
   );
 }
 
+function normalizePathForCompare(value) {
+  if (!value) return "";
+  return path.normalize(path.resolve(String(value))).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+function isSameOrChildPath(basePath, candidatePath) {
+  const base = normalizePathForCompare(basePath);
+  const candidate = normalizePathForCompare(candidatePath);
+  return Boolean(base && candidate && (candidate === base || candidate.startsWith(`${base}${path.sep}`)));
+}
+
+function isCurrentControlAppProcess(item) {
+  const pid = Number(item?.pid);
+  if (Number.isFinite(pid) && pid === process.pid) return true;
+
+  const itemPath = normalizePathForCompare(item?.path);
+  const currentPath = normalizePathForCompare(process.execPath);
+  if (itemPath && currentPath && itemPath === currentPath) return true;
+
+  const lowerName = String(item?.name || "").toLowerCase();
+  return lowerName.includes("dragonwilds") && lowerName.includes("server") && lowerName.includes("control");
+}
+
+function looksLikeDragonwildsServerProcessName(name) {
+  const lowerName = String(name || "").toLowerCase();
+  return lowerName.includes("dragonwilds") && lowerName.includes("server") && !lowerName.includes("control");
+}
+
+function isLikelyDragonwildsServerProcess(item, profile, managedPid = null) {
+  if (!item || !item.pid) return false;
+  if (managedPid && Number(item.pid) === Number(managedPid)) return true;
+  if (isCurrentControlAppProcess(item)) return false;
+
+  const lowerName = String(item.name || "").toLowerCase();
+  if (serverProcessNameSet.has(lowerName)) return true;
+  if (!looksLikeDragonwildsServerProcessName(lowerName)) return false;
+
+  if (!item.path) return false;
+  return isSameOrChildPath(profile?.paths?.serverDir, item.path);
+}
+
 function runProcessCapture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -1076,7 +1118,7 @@ function runProcessCapture(command, args, options = {}) {
   });
 }
 
-async function getRunningDragonwildsProcesses() {
+async function getRunningDragonwildsProcesses(profile = null) {
   const managedPid = isManagedServerProcessRunning() ? serverProcess.pid : null;
   if (ignoreExternalServerProcess) {
     return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
@@ -1113,14 +1155,24 @@ async function getRunningDragonwildsProcesses() {
     }
     const parsed = JSON.parse(raw);
     const items = Array.isArray(parsed) ? parsed : [parsed];
-    return items
+    const processes = items
       .filter((item) => item && item.Id)
       .map((item) => ({
         pid: Number(item.Id),
         name: item.ProcessName || "Dragonwilds server",
-        path: item.Path || null,
-        source: Number(item.Id) === managedPid ? "managed" : "external"
+        path: item.Path || null
       }));
+    const seen = new Set();
+    const filtered = [];
+    for (const item of processes) {
+      if (seen.has(item.pid) || !isLikelyDragonwildsServerProcess(item, profile, managedPid)) continue;
+      seen.add(item.pid);
+      filtered.push({
+        ...item,
+        source: item.pid === managedPid ? "managed" : "external"
+      });
+    }
+    return filtered;
   } catch (error) {
     appendActivity(`Could not scan Dragonwilds server processes: ${error.message}`);
     return managedPid ? [{ pid: managedPid, name: "App-managed server", source: "managed" }] : [];
@@ -1128,7 +1180,7 @@ async function getRunningDragonwildsProcesses() {
 }
 
 async function isDragonwildsServerRunning() {
-  return (await getRunningDragonwildsProcesses()).length > 0;
+  return (await getRunningDragonwildsProcesses(await getProfile())).length > 0;
 }
 
 function trySendGracefulQuitToManagedServer(taskName) {
@@ -1357,7 +1409,7 @@ function startFirstRunConfigBootstrap(profile, serverExe) {
 }
 
 async function startGameServer(profile) {
-  const runningProcesses = await getRunningDragonwildsProcesses();
+  const runningProcesses = await getRunningDragonwildsProcesses(profile);
   if (runningProcesses.length) {
     throw new Error("Dragonwilds dedicated server is already running.");
   }
@@ -1397,7 +1449,7 @@ async function startGameServer(profile) {
 }
 
 async function restartGameServer(profile) {
-  const runningProcesses = await getRunningDragonwildsProcesses();
+  const runningProcesses = await getRunningDragonwildsProcesses(profile);
   if (!runningProcesses.length) {
     return startGameServer(profile);
   }
@@ -1415,7 +1467,7 @@ async function restartGameServer(profile) {
 }
 
 async function stopGameServer() {
-  const runningProcesses = await getRunningDragonwildsProcesses();
+  const runningProcesses = await getRunningDragonwildsProcesses(await getProfile());
   if (!runningProcesses.length) {
     throw new Error("Dragonwilds dedicated server is not running.");
   }
@@ -1583,7 +1635,7 @@ async function getStatus() {
   const install = await detectServerInstall(profile);
   await pruneBackups(profile);
   const backups = await listBackups(profile);
-  const runningProcesses = await getRunningDragonwildsProcesses();
+  const runningProcesses = await getRunningDragonwildsProcesses(profile);
   pruneActivityLogIfNeeded();
   const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit, { maxAgeMs: logRetentionMs });
   const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit, { maxAgeMs: logRetentionMs });
@@ -1921,7 +1973,10 @@ function stopControlServer() {
 
 module.exports = {
   startControlServer,
-  stopControlServer
+  stopControlServer,
+  _internal: {
+    isLikelyDragonwildsServerProcess
+  }
 };
 
 if (require.main === module) {

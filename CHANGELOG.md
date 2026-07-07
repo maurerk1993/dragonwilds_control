@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.10 - Accurate server process detection
+
+- Fixed the app reporting the Dragonwilds dedicated server as running after reboot when only Dragonwilds Server Control was open.
+- Filtered process detection so the control app's Electron helper processes are not counted as the game server.
+- Kept detection for known Dragonwilds server child processes and constrained broad matches to the configured server folder.
+
 ## 0.5.9 - Running server control fix
 
 - Fixed Stop and Restart buttons staying disabled after the server transitions from stopped to running.
