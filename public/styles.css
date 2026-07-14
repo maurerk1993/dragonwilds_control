@@ -388,6 +388,16 @@ button:disabled {
   overflow: hidden;
 }
 
+.crash-notice {
+  border-color: rgba(212, 94, 82, 0.58);
+  background: rgba(52, 24, 22, 0.94);
+}
+
+.crash-notice.crash-loop {
+  border-color: rgba(255, 113, 103, 0.82);
+  box-shadow: inset 3px 0 #df6257;
+}
+
 .panel {
   min-width: 0;
   min-height: 0;
@@ -975,6 +985,15 @@ button:disabled {
 
 .backup-settings input[type="time"] {
   width: 116px;
+}
+
+.backup-settings .secondary-backup-field {
+  flex: 1 1 360px;
+}
+
+.backup-settings .secondary-backup-field input {
+  width: min(100%, 420px);
+  flex: 1 1 260px;
 }
 
 .backup-schedule-status {

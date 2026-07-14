@@ -1,7 +1,7 @@
 const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { _internal } = require("../server/index");
 
 const root = path.resolve(__dirname, "..");
@@ -68,6 +68,10 @@ function requestJson(route, method = "GET", body = null) {
   });
 }
 
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 async function waitForServer() {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -82,8 +86,8 @@ async function waitForServer() {
 
 async function main() {
   const app = await waitForServer();
-  if (app.version !== "0.5.12") {
-    throw new Error(`Expected version 0.5.12, got ${app.version}`);
+  if (app.version !== "0.6.0") {
+    throw new Error(`Expected version 0.6.0, got ${app.version}`);
   }
 
   const processDetectionProfile = {
@@ -152,6 +156,33 @@ async function main() {
     throw new Error("Process detection should reject broad Dragonwilds server matches outside the server folder.");
   }
 
+  const telemetry = _internal.parseServerTelemetry([
+    "Log file open, 07/14/26 10:00:00",
+    "[2026.07.14-14.00.01:000][  0]LogInit: Build: ++dominion+staging-CL-217767",
+    "[2026.07.14-14.00.02:000][  0]LogInit: Engine Version: 5.6.1-217767+++dominion+staging",
+    "[2026.07.14-14.00.03:000][  0]LogNet: IpNetDriver listening on port 28888",
+    "[2026.07.14-14.01.00:000][  0]LogGame: Player ADDED to session [player-1]-[Alice]",
+    "[2026.07.14-14.02.00:000][  0]LogGame: Player ADDED to session [player-2]-[Bob]",
+    "[2026.07.14-14.03.00:000][  0]LogGame: Player Removed from session [player-1]-[Alice]",
+    "[2026.07.14-14.04.00:000][  0]LogSave: Save completed SUCCESSFULLY (slot: DuneTime)",
+    "[2026.07.14-14.05.00:000][  0]LogCore: Fatal error: smoke-test failure marker"
+  ], true);
+  if (telemetry.connectedPlayerCount !== 1 || telemetry.connectedPlayers[0]?.name !== "Bob") {
+    throw new Error(`Log telemetry did not track current connected players: ${JSON.stringify(telemetry.connectedPlayers)}`);
+  }
+  if (
+    telemetry.listeningPort !== 28888 ||
+    telemetry.logBuild !== "++dominion+staging-CL-217767" ||
+    !telemetry.lastSuccessfulSaveAt ||
+    telemetry.fatalErrorCount !== 1
+  ) {
+    throw new Error(`Log telemetry did not parse readiness, build, save, or fatal-error events: ${JSON.stringify(telemetry)}`);
+  }
+  const parsedManifest = _internal.parseSteamManifestText('"buildid" "23986150"\n"LastUpdated" "1784044800"');
+  if (parsedManifest.buildId !== "23986150" || !parsedManifest.lastUpdatedAt) {
+    throw new Error(`Steam manifest parser did not return build metadata: ${JSON.stringify(parsedManifest)}`);
+  }
+
   const serverSource = await fs.readFile(path.join(root, "server", "index.js"), "utf8");
   const appSource = await fs.readFile(path.join(root, "public", "app.js"), "utf8");
   if (serverSource.includes("startCommand") || serverSource.includes("/wait cmd.exe")) {
@@ -170,21 +201,37 @@ async function main() {
     throw new Error("Update endpoint is wired directly to SteamCMD without stopping the server first.");
   }
   if (
-    !serverSource.includes("Stop server before update") ||
-    !serverSource.includes("Dragonwilds was running before update") ||
-    !serverSource.includes("managedServerWasRunning") ||
+    !serverSource.includes("Confirm save and stop Dragonwilds") ||
+    !serverSource.includes("waitForSaveConfirmation") ||
+    !serverSource.includes("forceAfterTimeout: false") ||
     !serverSource.includes("skipFirstRunConfigBootstrap")
   ) {
-    throw new Error("Update workflow is missing stop, restart-marker, or update chaining behavior.");
+    throw new Error("Update workflow is missing confirmed-save shutdown, backup, or update chaining behavior.");
   }
   if (
     !serverSource.includes("trySendGracefulQuitToManagedServer") ||
-    !serverSource.includes("Graceful shutdown timed out; forcing")
+    !serverSource.includes("Maintenance was aborted without force-closing Dragonwilds")
   ) {
-    throw new Error("Update workflow is missing graceful shutdown fallback coverage.");
+    throw new Error("Maintenance workflow is missing graceful shutdown abort coverage.");
   }
-  if (!appSource.includes("Update workflow started")) {
-    throw new Error("Update action should describe the stop-update-restart workflow.");
+  if (!appSource.includes("Safe backup and update workflow started")) {
+    throw new Error("Update action should describe the verified maintenance workflow.");
+  }
+  if (
+    !serverSource.includes("crashRestartDelaysSeconds = [5, 15, 30]") ||
+    !serverSource.includes("Crash-loop protection activated") ||
+    !serverSource.includes("scheduleCrashRestart") ||
+    !appSource.includes("Crash-loop protection is active")
+  ) {
+    throw new Error("Crash restart backoff or visible crash-loop protection is missing.");
+  }
+  if (
+    !serverSource.includes("backup-metadata.json") ||
+    !serverSource.includes("CopyTo([System.IO.Stream]::Null)") ||
+    !serverSource.includes("Get-FileSha256") ||
+    !serverSource.includes("waitForServerReadiness")
+  ) {
+    throw new Error("Verified full backup, secondary hash, or restart readiness coverage is missing.");
   }
   if (appSource.includes("element.disabled || !status.serverRunning")) {
     throw new Error("Server running controls must recalculate from status instead of latching a previous disabled state.");
@@ -216,7 +263,10 @@ async function main() {
   );
   await fs.mkdir(testServerDir, { recursive: true });
   await fs.mkdir(path.join(testServerDir, "steamapps"), { recursive: true });
-  await fs.writeFile(path.join(testServerDir, "steamapps", "appmanifest_4019830.acf"), '"appid" "4019830"');
+  await fs.writeFile(
+    path.join(testServerDir, "steamapps", "appmanifest_4019830.acf"),
+    '"appid" "4019830"\n"buildid" "23986150"\n"LastUpdated" "1784044800"'
+  );
   await fs.writeFile(path.join(testServerDir, "steamcmd-downloading.tmp"), "partial payload marker");
   profile.server.port = 28888;
   profile.server.launchArgs = "-log -NewConsole -port=7777";
@@ -349,6 +399,18 @@ async function main() {
     throw new Error("Existing DedicatedServer.ini values were not hydrated into the profile.");
   }
 
+  await fs.mkdir(path.dirname(profile.paths.logPath), { recursive: true });
+  await fs.writeFile(
+    profile.paths.logPath,
+    [
+      "Log file open, 07/14/26 10:00:00",
+      "[2026.07.14-14.00.01:000][  0]LogInit: Build: ++dominion+staging-CL-217767",
+      "[2026.07.14-14.00.02:000][  0]LogInit: Engine Version: 5.6.1-217767+++dominion+staging",
+      "[2026.07.14-14.04.00:000][  0]LogSave: Save completed SUCCESSFULLY (slot: DuneTime)"
+    ].join("\n"),
+    "utf8"
+  );
+
   const status = await requestJson("/api/status");
   if (status.selectedPort !== 28888) {
     throw new Error("Status did not report the saved server port.");
@@ -393,11 +455,19 @@ async function main() {
   if (!status.paths.serverExe.path.endsWith("RSDragonwildsServer.exe")) {
     throw new Error(`Status did not detect RSDragonwildsServer.exe: ${status.paths.serverExe.path}`);
   }
+  if (status.installedVersion?.buildId !== "23986150" || status.telemetry?.logBuild !== "++dominion+staging-CL-217767") {
+    throw new Error(`Status did not expose installed and log build versions: ${JSON.stringify({ installed: status.installedVersion, telemetry: status.telemetry })}`);
+  }
+  if (!status.telemetry?.lastSuccessfulSaveAt || !status.diskSpace?.backups || !status.runtime || !status.maintenance) {
+    throw new Error("Status is missing save, disk, crash-runtime, or maintenance health fields.");
+  }
 
+  const secondaryBackupDir = path.join(testServerDir, "SecondaryBackups");
   const savedBackupSettings = await requestJson("/api/backups/settings", "PUT", {
     retentionCount: 3,
     scheduleEnabled: true,
-    scheduleTime: "23:59"
+    scheduleTime: "23:59",
+    secondaryDir: secondaryBackupDir
   });
   if (savedBackupSettings.profile.backups.retentionCount !== 3 || savedBackupSettings.status.backupRetentionCount !== 3) {
     throw new Error("Backup retention setting did not save with scheduled maintenance settings.");
@@ -408,6 +478,54 @@ async function main() {
     !savedBackupSettings.status.backupSchedule.nextRunAt
   ) {
     throw new Error(`Daily backup/update schedule did not save correctly: ${JSON.stringify(savedBackupSettings.status.backupSchedule)}`);
+  }
+  if (savedBackupSettings.profile.backups.secondaryDir !== secondaryBackupDir) {
+    throw new Error("Secondary backup path did not save.");
+  }
+
+  await fs.mkdir(profile.paths.saveDir, { recursive: true });
+  await fs.writeFile(path.join(profile.paths.saveDir, "SmokeWorld.sav"), "smoke save data", "utf8");
+  const backupStart = await requestJson("/api/backups", "POST", {});
+  if (!backupStart.task || !backupStart.task.name.includes("verified")) {
+    throw new Error(`Verified backup workflow did not start: ${JSON.stringify(backupStart)}`);
+  }
+  const backupDeadline = Date.now() + 30000;
+  let backupStatus = null;
+  while (Date.now() < backupDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    backupStatus = await requestJson("/api/status");
+    if (!backupStatus.maintenance?.active) break;
+  }
+  if (!backupStatus || backupStatus.maintenance?.active) {
+    throw new Error(`Verified backup workflow timed out: ${JSON.stringify(backupStatus?.task)}`);
+  }
+  if (backupStatus.task?.status !== "completed") {
+    throw new Error(`Verified backup workflow failed: ${JSON.stringify(backupStatus.task)}`);
+  }
+  const createdBackup = backupStatus.backups?.[0];
+  if (!createdBackup?.name?.startsWith("dragonwilds-save-") || createdBackup.sizeBytes <= 0) {
+    throw new Error(`Verified backup was not listed: ${JSON.stringify(backupStatus.backups)}`);
+  }
+  const primaryBytes = await fs.readFile(createdBackup.path);
+  const secondaryBytes = await fs.readFile(path.join(secondaryBackupDir, createdBackup.name));
+  if (!primaryBytes.equals(secondaryBytes)) {
+    throw new Error("Secondary backup does not match the verified primary archive.");
+  }
+  const extractionDir = path.join(root, ".runtime-test", "backup-extracted");
+  const extraction = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `Expand-Archive -LiteralPath ${psQuote(createdBackup.path)} -DestinationPath ${psQuote(extractionDir)} -Force`],
+    { encoding: "utf8", windowsHide: true }
+  );
+  if (extraction.status !== 0) {
+    throw new Error(`Could not inspect verified backup archive: ${extraction.stderr || extraction.stdout}`);
+  }
+  for (const relativePath of ["backup-metadata.json", "Savegames/SmokeWorld.sav", "Config/DedicatedServer.ini", "Control/profile.json"]) {
+    try {
+      await fs.access(path.join(extractionDir, relativePath));
+    } catch {
+      throw new Error(`Verified full backup is missing ${relativePath}.`);
+    }
   }
 
   const page = await new Promise((resolve, reject) => {
@@ -444,10 +562,20 @@ async function main() {
   if (
     !page.includes('id="backupScheduleEnabled"') ||
     !page.includes('id="backupScheduleTime"') ||
+    !page.includes('id="backupSecondaryDir"') ||
     !page.includes('id="backupScheduleStatus"') ||
     !page.includes("Daily backup + update")
   ) {
     throw new Error("Backups page is missing daily backup/update schedule controls.");
+  }
+  if (
+    !page.includes('id="connectedPlayersTop"') ||
+    !page.includes('id="crashNotice"') ||
+    !appSource.includes("lastSuccessfulSaveAt") ||
+    !appSource.includes("newestBackupAgeMs") ||
+    !appSource.includes("hasRecentFatalError")
+  ) {
+    throw new Error("Dashboard is missing connected-player, crash-loop, or expanded health UI wiring.");
   }
   if (
     !serverSource.includes("runScheduledBackupUpdateWorkflow") ||

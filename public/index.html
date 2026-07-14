@@ -98,7 +98,7 @@
         <div class="side-footer">
           <div class="mini-stat">
             <span>App Version</span>
-            <strong id="appVersion">0.5.12</strong>
+            <strong id="appVersion">0.6.0</strong>
           </div>
           <div class="mini-stat">
             <span>Profile</span>
@@ -150,9 +150,9 @@
             <small id="portProbe">Secondary 7778</small>
           </div>
           <div class="top-stat">
-            <span class="label">Players</span>
-            <strong id="maxPlayersTop">4</strong>
-            <small>Max players</small>
+            <span class="label">Connected Players</span>
+            <strong id="connectedPlayersTop">0</strong>
+            <small id="connectedPlayersSummary">No players connected</small>
           </div>
         </header>
 
@@ -162,6 +162,14 @@
             <span id="taskDetails">Waiting for output...</span>
           </div>
           <button class="ghost-button" id="refreshNow">Refresh</button>
+        </section>
+
+        <section class="notice crash-notice" id="crashNotice" hidden>
+          <div>
+            <strong id="crashNoticeTitle">Server restart warning</strong>
+            <span id="crashNoticeDetails">The server exited unexpectedly.</span>
+          </div>
+          <button class="ghost-button" id="crashNoticeAction" type="button" data-action="start" data-requires-exe data-requires-stopped>Start Server</button>
         </section>
 
         <div class="view active" id="dashboardView">
@@ -374,6 +382,10 @@
                 <label>
                   <span>At</span>
                   <input id="backupScheduleTime" name="scheduleTime" type="time" step="60">
+                </label>
+                <label class="secondary-backup-field">
+                  <span>Secondary copy</span>
+                  <input id="backupSecondaryDir" name="secondaryDir" type="text" autocomplete="off" placeholder="Optional folder path">
                 </label>
               </div>
               <button class="ghost-button" type="submit">Save</button>

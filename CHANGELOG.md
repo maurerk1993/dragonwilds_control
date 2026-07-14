@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 - Safer maintenance and live server health
+
+- Changed manual and scheduled maintenance to require a log-confirmed successful world save before backing up or updating a running server.
+- Expanded backups to include savegames, `DedicatedServer.ini`, the control profile, and recovery metadata; archives are fully read back before retention cleanup or updates continue.
+- Added an optional secondary backup folder with SHA256 verification and the same retention rule as primary backups.
+- Kept SteamCMD updates on the no-validate path and added installed build ID, server log build, last update result, and post-restart UDP readiness tracking.
+- Replaced the hard-coded player capacity card with current connected players parsed from server join and leave events.
+- Added bounded automatic crash restarts with 5, 15, and 30 second backoff, plus a visible crash-loop warning after three failed restarts in 15 minutes.
+- Added last successful save, newest backup age, backup disk free space, recent fatal-log errors, Steam build, and readiness to Health Check.
+- Preserved existing custom ports, passwords, backup schedule, and retention settings.
+
 ## 0.5.12 - Daily backup and update schedule
 
 - Added a daily backup/update schedule to the Backups page with enable, time-of-day, next run, and last run status.

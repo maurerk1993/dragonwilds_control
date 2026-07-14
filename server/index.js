@@ -38,6 +38,25 @@ let backupScheduleTimer = null;
 let backupScheduleCheckInFlight = false;
 let lastIniPatchError = null;
 let lastActivityLogPruneAt = 0;
+let maintenanceWorkflowActive = false;
+let maintenanceWorkflowName = null;
+let lastStartReadinessPromise = null;
+let crashRestartTimer = null;
+const intentionalServerExitPids = new Set();
+const serverRuntimeState = {
+  expectedRunning: false,
+  lastStartedAt: null,
+  readinessStatus: "unknown",
+  readinessMessage: "Server has not been started by this app yet.",
+  readyAt: null,
+  lastExitAt: null,
+  lastExitCode: null,
+  lastCrashAt: null,
+  restartAttempts: [],
+  restartScheduledAt: null,
+  crashLoop: false,
+  crashMessage: null
+};
 
 const serverExeCandidates = [
   "RSDragonwildsServer.exe",
@@ -59,6 +78,11 @@ const publicIpRefreshMs = 10 * 60 * 1000;
 const publicIpLookupTimeoutMs = 1800;
 const backupScheduleCheckIntervalMs = 30 * 1000;
 const gracefulStopTimeoutSeconds = 30;
+const saveConfirmationTimeoutMs = 15 * 1000;
+const serverReadinessTimeoutMs = 90 * 1000;
+const serverReadinessPollMs = 1000;
+const crashRestartWindowMs = 15 * 60 * 1000;
+const crashRestartDelaysSeconds = [5, 15, 30];
 const dedicatedServerSection = "/Script/Dominion.DedicatedServerSettings";
 const defaultGamePort = 7777;
 const minGamePort = 1;
@@ -85,6 +109,7 @@ const defaultProfile = {
   },
   backups: {
     retentionCount: 10,
+    secondaryDir: "",
     schedule: {
       enabled: false,
       time: "03:00",
@@ -108,6 +133,16 @@ const defaultProfile = {
     worldName: "Ashenfall",
     autoSaveMinutes: 15,
     launchArgs: "-log -NewConsole"
+  },
+  maintenance: {
+    lastUpdateStartedAt: null,
+    lastUpdateCompletedAt: null,
+    lastUpdateStatus: null,
+    lastUpdateMessage: null,
+    buildIdBefore: null,
+    buildIdAfter: null,
+    restartReadinessStatus: null,
+    restartReadyAt: null
   },
   iniMappings: {
     ownerId: { section: dedicatedServerSection, key: "OwnerId" },
@@ -210,6 +245,13 @@ function normalizeBackupSchedule(schedule) {
   };
 }
 
+function normalizeMaintenance(maintenance) {
+  return {
+    ...defaultProfile.maintenance,
+    ...(maintenance || {})
+  };
+}
+
 async function ensureDataDir() {
   await fsp.mkdir(dataDir, { recursive: true });
 }
@@ -242,9 +284,11 @@ function normalizeProfile(profile) {
   next.backups = {
     ...defaultProfile.backups,
     ...(next.backups || {}),
-    retentionCount: Number.isInteger(retentionCount) && retentionCount > 0 ? Math.min(retentionCount, 999) : defaultProfile.backups.retentionCount
+    retentionCount: Number.isInteger(retentionCount) && retentionCount > 0 ? Math.min(retentionCount, 999) : defaultProfile.backups.retentionCount,
+    secondaryDir: String(next.backups?.secondaryDir || "").trim()
   };
   next.backups.schedule = normalizeBackupSchedule(next.backups.schedule);
+  next.maintenance = normalizeMaintenance(next.maintenance);
   next.iniMappings = { ...defaultProfile.iniMappings };
   next.customIniValues = Array.isArray(next.customIniValues) ? next.customIniValues : [];
   return next;
@@ -336,7 +380,10 @@ async function getProfile() {
 
 async function saveProfile(profile) {
   assertValidGamePort(profile?.server?.port ?? defaultProfile.server.port);
+  const current = normalizeProfile(await getProfile());
   const next = normalizeProfile(profile);
+  next.backups = current.backups;
+  next.maintenance = current.maintenance;
   if (next.writeIniOnSave && await isDragonwildsServerRunning()) {
     throw new Error("Stop the Dragonwilds server before saving setup changes. The game can overwrite live config edits.");
   }
@@ -389,6 +436,12 @@ async function saveBackupSettings(settings) {
     throw new Error("Daily maintenance time must be a valid 24-hour time like 03:30.");
   }
   const normalizedTime = normalizeDailyTime(scheduleTime);
+  const secondaryDir = settings?.secondaryDir === undefined
+    ? String(profile.backups?.secondaryDir || "").trim()
+    : String(settings.secondaryDir || "").trim();
+  if (secondaryDir && normalizePathForCompare(secondaryDir) === normalizePathForCompare(profile.paths.backupDir)) {
+    throw new Error("Secondary backup folder must be different from the primary backup folder.");
+  }
   const scheduleChanged =
     scheduleEnabled !== currentSchedule.enabled ||
     normalizedTime !== currentSchedule.time ||
@@ -397,6 +450,7 @@ async function saveBackupSettings(settings) {
   profile.backups = {
     ...(profile.backups || {}),
     retentionCount,
+    secondaryDir,
     schedule: {
       ...currentSchedule,
       enabled: scheduleEnabled,
@@ -414,10 +468,20 @@ async function saveBackupSettings(settings) {
   await pruneBackups(profile);
   appendActivity(
     scheduleEnabled
-      ? `Backup retention changed to keep last ${retentionCount}. Daily backup/update scheduled at ${normalizedTime}.`
-      : `Backup retention changed to keep last ${retentionCount}. Daily backup/update schedule disabled.`
+      ? `Backup retention changed to keep last ${retentionCount}. Daily backup/update scheduled at ${normalizedTime}.${secondaryDir ? ` Secondary copies: ${secondaryDir}.` : ""}`
+      : `Backup retention changed to keep last ${retentionCount}. Daily backup/update schedule disabled.${secondaryDir ? ` Secondary copies: ${secondaryDir}.` : ""}`
   );
   return profile;
+}
+
+async function updateMaintenanceState(updates) {
+  const profile = normalizeProfile(await getProfile());
+  profile.maintenance = normalizeMaintenance({
+    ...profile.maintenance,
+    ...updates
+  });
+  await writeJson(profilePath, profile);
+  return profile.maintenance;
 }
 
 function valueIsSet(value) {
@@ -1104,7 +1168,13 @@ function beginTask(name, command, args, options = {}) {
     task.finishedAt = timestamp();
     serverDetectionCache = null;
     appendActivity(`Task finished: ${name} (exit ${exitCode})`);
-    for (const filePath of cleanupPaths || []) removeQuietly(filePath);
+    if (exitCode === 0) {
+      for (const filePath of cleanupPaths || []) removeQuietly(filePath);
+    } else {
+      for (const filePath of cleanupPaths || []) {
+        if (exists(filePath)) pushTaskOutput(task, `Retained failed task script: ${filePath}`);
+      }
+    }
     if (typeof onComplete === "function") {
       setTimeout(() => {
         Promise.resolve(onComplete({ exitCode, task }))
@@ -1174,12 +1244,14 @@ function windowsExternalPowerShellTask(name, script, options = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const {
     initialOutput,
+    onComplete,
     pauseAtEnd = true,
     ...taskOptions
   } = options;
   const taskSlug = `${Date.now()}-${safeTaskFileName(name)}`;
   const ps1Path = path.join(dataDir, `${taskSlug}.ps1`);
   const cmdPath = path.join(dataDir, `${taskSlug}.cmd`);
+  const outputPath = path.join(dataDir, `${taskSlug}.output.log`);
   const title = safeWindowTitle(name);
   const ps1 = [
     "$ErrorActionPreference = 'Stop'",
@@ -1192,8 +1264,9 @@ function windowsExternalPowerShellTask(name, script, options = {}) {
     "echo Dragonwilds Server Control",
     `echo Task: ${name.replace(/[&<>|]/g, "")}`,
     "echo.",
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${ps1Path}"`,
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${ps1Path}" > "${outputPath}" 2>&1`,
     "set DWSC_EXIT=%ERRORLEVEL%",
+    `if exist "${outputPath}" type "${outputPath}"`,
     "echo.",
     "echo Task finished with exit code %DWSC_EXIT%.",
     pauseAtEnd
@@ -1225,6 +1298,17 @@ function windowsExternalPowerShellTask(name, script, options = {}) {
     stdio: "ignore",
     windowCommand: `cmd.exe ${formatLaunchArgsForDisplay(commandArgs)}`,
     windowsHide: false,
+    onComplete: async (payload) => {
+      try {
+        const retainedOutput = fs.readFileSync(outputPath, "utf8");
+        for (const line of retainedOutput.split(/\r\n|\n|\r/)) pushTaskOutput(payload.task, line);
+      } catch {
+        // Some commands finish before producing output.
+      }
+      if (payload.exitCode === 0) removeQuietly(outputPath);
+      else pushTaskOutput(payload.task, `Retained failed task output: ${outputPath}`);
+      if (typeof onComplete === "function") await onComplete(payload);
+    },
     ...taskOptions
   });
 }
@@ -1420,8 +1504,317 @@ async function getRunningDragonwildsProcesses(profile = null) {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getFileSize(filePath) {
+  try {
+    return (await fsp.stat(filePath)).size;
+  } catch (error) {
+    if (error.code === "ENOENT") return 0;
+    throw error;
+  }
+}
+
+async function readFileFromOffset(filePath, offset = 0) {
+  try {
+    const stat = await fsp.stat(filePath);
+    const start = stat.size >= offset ? offset : 0;
+    if (stat.size <= start) return "";
+    const handle = await fsp.open(filePath, "r");
+    try {
+      const length = stat.size - start;
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, start);
+      return buffer.toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+function parseUnrealLogTimestamp(line) {
+  const match = String(line || "").match(
+    /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3})\]/
+  );
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second, millisecond] = match.map(Number);
+  const value = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  return Number.isFinite(value) ? new Date(value).toISOString() : null;
+}
+
+function cleanTelemetryMessage(line) {
+  return String(line || "")
+    .replace(/^\[[^\]]+\]\s*\[[^\]]+\]\s*/, "")
+    .trim()
+    .slice(0, 500);
+}
+
+function parseServerTelemetry(lines, serverRunning = false) {
+  const currentSessionStart = Math.max(
+    0,
+    lines.map((line) => (/^Log file open,/i.test(line) || /LogInit: Build:/i.test(line) ? 1 : 0)).lastIndexOf(1)
+  );
+  const sessionLines = lines.slice(currentSessionStart);
+  const players = new Map();
+  let lastSuccessfulSaveAt = null;
+  let lastSuccessfulSaveMessage = null;
+  let logBuild = null;
+  let engineVersion = null;
+  let listeningPort = null;
+  let readyAt = null;
+  const fatalErrors = [];
+
+  for (const line of sessionLines) {
+    const playerAdded = line.match(/Player\s+ADDED\s+to\s+session\s+\[([^\]]+)\]-\[([^\]]+)\]/i);
+    if (playerAdded) {
+      players.set(playerAdded[1], {
+        id: playerAdded[1],
+        name: playerAdded[2],
+        joinedAt: parseUnrealLogTimestamp(line)
+      });
+    }
+    const playerRemoved = line.match(/Player\s+Removed\s+from\s+session\s+\[([^\]]+)\]-\[([^\]]+)\]/i);
+    if (playerRemoved) players.delete(playerRemoved[1]);
+
+    if (/Save completed SUCCESSFULLY/i.test(line)) {
+      lastSuccessfulSaveAt = parseUnrealLogTimestamp(line);
+      lastSuccessfulSaveMessage = cleanTelemetryMessage(line);
+    }
+    const buildMatch = line.match(/LogInit:\s+Build:\s+(.+)$/i);
+    if (buildMatch) logBuild = buildMatch[1].trim();
+    const engineMatch = line.match(/LogInit:\s+Engine Version:\s+(.+)$/i);
+    if (engineMatch) engineVersion = engineMatch[1].trim();
+    const listeningMatch = line.match(/IpNetDriver listening on port\s+(\d+)/i);
+    if (listeningMatch) {
+      listeningPort = Number(listeningMatch[1]);
+      readyAt = parseUnrealLogTimestamp(line);
+    }
+    if (
+      /Fatal error:/i.test(line) ||
+      /Unhandled Exception:/i.test(line) ||
+      /LowLevelFatalError/i.test(line) ||
+      /=== Critical error ===/i.test(line) ||
+      /Out of memory/i.test(line) ||
+      /Assertion failed:/i.test(line)
+    ) {
+      fatalErrors.push({
+        at: parseUnrealLogTimestamp(line),
+        message: cleanTelemetryMessage(line)
+      });
+    }
+  }
+
+  return {
+    connectedPlayerCount: serverRunning ? players.size : 0,
+    connectedPlayers: serverRunning ? Array.from(players.values()) : [],
+    lastSuccessfulSaveAt,
+    lastSuccessfulSaveMessage,
+    logBuild,
+    engineVersion,
+    listeningPort: serverRunning ? listeningPort : null,
+    readyAt: serverRunning ? readyAt : null,
+    fatalErrorCount: fatalErrors.length,
+    lastFatalError: fatalErrors.at(-1) || null,
+    recentFatalErrors: fatalErrors.slice(-5)
+  };
+}
+
+function parseSteamManifestText(text) {
+  const buildId = String(text || "").match(/"buildid"\s+"(\d+)"/i)?.[1] || null;
+  const lastUpdatedSeconds = Number(String(text || "").match(/"LastUpdated"\s+"(\d+)"/i)?.[1]);
+  return {
+    buildId,
+    lastUpdatedAt: Number.isFinite(lastUpdatedSeconds) && lastUpdatedSeconds > 0
+      ? new Date(lastUpdatedSeconds * 1000).toISOString()
+      : null
+  };
+}
+
+async function getInstalledServerVersion(profile, manifestPath = null) {
+  const candidate = manifestPath || steamAppManifestCandidates(profile).find((item) => exists(item));
+  if (!candidate) return { buildId: null, lastUpdatedAt: null, manifestPath: null };
+  try {
+    return {
+      ...parseSteamManifestText(await fsp.readFile(candidate, "utf8")),
+      manifestPath: candidate
+    };
+  } catch (error) {
+    return { buildId: null, lastUpdatedAt: null, manifestPath: candidate, error: error.message };
+  }
+}
+
+async function getDiskSpaceSnapshot(targetPath) {
+  let current = path.resolve(targetPath || dataDir);
+  while (!exists(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  try {
+    const stat = await fsp.statfs(current);
+    const blockSize = Number(stat.bsize || stat.frsize || 0);
+    const totalBytes = Number(stat.blocks) * blockSize;
+    const freeBytes = Number(stat.bavail ?? stat.bfree) * blockSize;
+    return {
+      path: current,
+      totalBytes,
+      freeBytes,
+      usedPercent: totalBytes > 0 ? ((totalBytes - freeBytes) / totalBytes) * 100 : null
+    };
+  } catch (error) {
+    return { path: current, totalBytes: null, freeBytes: null, usedPercent: null, error: error.message };
+  }
+}
+
 async function isDragonwildsServerRunning() {
   return (await getRunningDragonwildsProcesses(await getProfile())).length > 0;
+}
+
+function markManagedServerExitIntentional() {
+  if (isManagedServerProcessRunning()) {
+    intentionalServerExitPids.add(Number(serverProcess.pid));
+  }
+}
+
+async function waitForLogPattern(logPath, startOffset, pattern, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  let observed = "";
+  while (Date.now() <= deadline) {
+    observed += await readFileFromOffset(logPath, startOffset + Buffer.byteLength(observed, "utf8"));
+    const match = observed.match(pattern);
+    if (match) {
+      return {
+        ok: true,
+        at: parseUnrealLogTimestamp(match[0]) || timestamp(),
+        match: match[0]
+      };
+    }
+    await delay(serverReadinessPollMs);
+  }
+  return {
+    ok: false,
+    at: null,
+    message: `${label} was not found in the Dragonwilds log within ${Math.ceil(timeoutMs / 1000)} seconds.`
+  };
+}
+
+function waitForSaveConfirmation(profile, logOffset) {
+  return waitForLogPattern(
+    profile.paths.logPath,
+    logOffset,
+    /^.*Save completed SUCCESSFULLY.*$/im,
+    saveConfirmationTimeoutMs,
+    "A successful save confirmation"
+  );
+}
+
+async function waitForServerReadiness(profile, logOffset, processId) {
+  const selectedPort = assertValidGamePort(profile.server.port);
+  const pattern = new RegExp(`^.*IpNetDriver listening on port\\s+${selectedPort}\\b.*$`, "im");
+  const deadline = Date.now() + serverReadinessTimeoutMs;
+  let observed = "";
+  while (Date.now() <= deadline) {
+    if (processId && serverProcess?.pid !== processId) {
+      return { ok: false, at: null, message: "The server process exited before readiness could be confirmed." };
+    }
+    observed += await readFileFromOffset(
+      profile.paths.logPath,
+      logOffset + Buffer.byteLength(observed, "utf8")
+    );
+    const match = observed.match(pattern);
+    if (match) {
+      return {
+        ok: true,
+        at: parseUnrealLogTimestamp(match[0]) || timestamp(),
+        match: match[0]
+      };
+    }
+    await delay(serverReadinessPollMs);
+  }
+  return {
+    ok: false,
+    at: null,
+    message: `UDP readiness on port ${selectedPort} was not found in the Dragonwilds log within ${Math.ceil(serverReadinessTimeoutMs / 1000)} seconds.`
+  };
+}
+
+function pruneCrashRestartAttempts(now = Date.now()) {
+  serverRuntimeState.restartAttempts = serverRuntimeState.restartAttempts.filter(
+    (value) => now - Date.parse(value) <= crashRestartWindowMs
+  );
+}
+
+function clearCrashRestartTimer() {
+  if (crashRestartTimer) clearTimeout(crashRestartTimer);
+  crashRestartTimer = null;
+  serverRuntimeState.restartScheduledAt = null;
+}
+
+function resetCrashRecoveryState() {
+  clearCrashRestartTimer();
+  serverRuntimeState.restartAttempts = [];
+  serverRuntimeState.crashLoop = false;
+  serverRuntimeState.crashMessage = null;
+}
+
+function scheduleCrashRestart() {
+  pruneCrashRestartAttempts();
+  const attemptIndex = serverRuntimeState.restartAttempts.length;
+  if (attemptIndex >= crashRestartDelaysSeconds.length) {
+    clearCrashRestartTimer();
+    serverRuntimeState.crashLoop = true;
+    serverRuntimeState.expectedRunning = false;
+    serverRuntimeState.crashMessage = `Automatic restart stopped after ${crashRestartDelaysSeconds.length} attempts within 15 minutes. Review the fatal errors and server log, then start the server manually.`;
+    appendActivity(`Crash-loop protection activated. ${serverRuntimeState.crashMessage}`);
+    return;
+  }
+
+  const delaySeconds = crashRestartDelaysSeconds[attemptIndex];
+  serverRuntimeState.restartScheduledAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
+  serverRuntimeState.crashMessage = `The server exited unexpectedly. Automatic restart ${attemptIndex + 1} of ${crashRestartDelaysSeconds.length} is scheduled in ${delaySeconds} seconds.`;
+  appendActivity(serverRuntimeState.crashMessage);
+  crashRestartTimer = setTimeout(async () => {
+    crashRestartTimer = null;
+    serverRuntimeState.restartScheduledAt = null;
+    if (maintenanceWorkflowActive || (activeTask && ["running", "stopping"].includes(activeTask.status))) {
+      appendActivity("Automatic crash restart is waiting for the current maintenance task to finish.");
+      scheduleCrashRestart();
+      return;
+    }
+    serverRuntimeState.restartAttempts.push(timestamp());
+    try {
+      appendActivity(`Attempting automatic crash restart ${attemptIndex + 1} of ${crashRestartDelaysSeconds.length}.`);
+      await startGameServer(await getProfile(), { source: "crash-recovery", resetCrashState: false });
+    } catch (error) {
+      serverRuntimeState.lastCrashAt = timestamp();
+      serverRuntimeState.crashMessage = `Automatic restart could not start the server: ${error.message}`;
+      appendActivity(serverRuntimeState.crashMessage);
+      scheduleCrashRestart();
+    }
+  }, delaySeconds * 1000);
+}
+
+function handleManagedServerExit(child, exitCode, processError = null) {
+  const processId = Number(child?.pid || 0);
+  const intentional = intentionalServerExitPids.delete(processId);
+  if (serverProcess === child) serverProcess = null;
+  serverRuntimeState.lastExitAt = timestamp();
+  serverRuntimeState.lastExitCode = Number.isInteger(exitCode) ? exitCode : null;
+  serverRuntimeState.readinessStatus = "offline";
+  serverRuntimeState.readyAt = null;
+
+  const detail = processError ? processError.message : `exit code ${exitCode}`;
+  appendActivity(`Server exited with ${detail}${intentional ? " (expected)" : ""}.`);
+  if (intentional || !serverRuntimeState.expectedRunning) return;
+
+  serverRuntimeState.lastCrashAt = timestamp();
+  serverRuntimeState.readinessMessage = `Server exited unexpectedly with ${detail}.`;
+  scheduleCrashRestart();
 }
 
 function trySendGracefulQuitToManagedServer(taskName) {
@@ -1439,27 +1832,22 @@ function trySendGracefulQuitToManagedServer(taskName) {
   }
 }
 
-function readServerWasRunningMarker(markerPath) {
-  try {
-    return fs.readFileSync(markerPath, "utf8").trim().toLowerCase() === "running";
-  } catch {
-    return false;
-  }
-}
-
 function gracefulStopDragonwildsTask(name, options = {}) {
   const {
+    forceAfterTimeout = true,
     markerPath,
     timeoutSeconds = gracefulStopTimeoutSeconds,
     ...taskOptions
   } = options;
   const timeout = Math.max(5, Number(timeoutSeconds) || gracefulStopTimeoutSeconds);
   const managedServerWasRunning = isManagedServerProcessRunning();
+  markManagedServerExitIntentional();
   trySendGracefulQuitToManagedServer(name);
 
   const script = [
     `$names = ${psArray(serverProcessNames)}`,
     `$timeoutSeconds = ${timeout}`,
+    `$forceAfterTimeout = ${forceAfterTimeout ? "$true" : "$false"}`,
     `$managedServerWasRunning = ${managedServerWasRunning ? "$true" : "$false"}`,
     "function Get-DragonwildsProcesses {",
     "  $items = @()",
@@ -1490,7 +1878,8 @@ function gracefulStopDragonwildsTask(name, options = {}) {
     "}",
     "$remaining = @(Get-DragonwildsProcesses)",
     "if ($remaining.Count -gt 0) {",
-    "  Write-Output ('Graceful shutdown timed out; forcing {0} remaining Dragonwilds process(es).' -f $remaining.Count)",
+    "  if (!$forceAfterTimeout) { Write-Error ('Graceful shutdown timed out with {0} process(es) still running. Maintenance was aborted without force-closing Dragonwilds.' -f $remaining.Count); exit 1 }",
+    "  Write-Output ('Graceful shutdown timed out; force-closing {0} remaining Dragonwilds process(es).' -f $remaining.Count)",
     "  foreach ($process in $remaining) {",
     "    $processId = $process.Id",
     "    & taskkill.exe /PID $processId /T /F | Out-Host",
@@ -1562,90 +1951,10 @@ async function runInstall(profile, validate, options = {}) {
 }
 
 async function runUpdateServerWorkflow(profile, options = {}) {
-  const { onComplete } = options;
-  fs.mkdirSync(dataDir, { recursive: true });
-  const restartMarkerPath = path.join(dataDir, `${Date.now()}-update-server-restart-state.txt`);
-  appendActivity("Update workflow started. Dragonwilds will be stopped before SteamCMD updates the server files.");
-
-  return gracefulStopDragonwildsTask("Stop server before update", {
-    markerPath: restartMarkerPath,
-    onComplete: async ({ exitCode }) => {
-      if (exitCode !== 0) {
-        removeQuietly(restartMarkerPath);
-        appendActivity("Update server skipped because Dragonwilds could not be stopped cleanly.");
-        if (typeof onComplete === "function") {
-          await onComplete({
-            status: "failed",
-            message: "Dragonwilds could not be stopped cleanly before update."
-          });
-        }
-        return;
-      }
-
-      const shouldRestart = readServerWasRunningMarker(restartMarkerPath);
-      appendActivity(
-        shouldRestart
-          ? "Dragonwilds was running before update. It will restart after SteamCMD finishes."
-          : "Dragonwilds was already offline before update. It will stay offline after SteamCMD finishes."
-      );
-
-      try {
-        await runInstall(await getProfile(), false, {
-          skipFirstRunConfigBootstrap: true,
-          onComplete: async ({ exitCode: updateExitCode }) => {
-            removeQuietly(restartMarkerPath);
-            if (updateExitCode !== 0) {
-              appendActivity(`Server restart skipped because SteamCMD update failed (exit ${updateExitCode}).`);
-              if (typeof onComplete === "function") {
-                await onComplete({
-                  status: "failed",
-                  message: `SteamCMD update failed with exit code ${updateExitCode}.`
-                });
-              }
-              return;
-            }
-            if (!shouldRestart) {
-              appendActivity("Update complete. Dragonwilds was offline before update, so it was left offline.");
-              if (typeof onComplete === "function") {
-                await onComplete({
-                  status: "completed",
-                  message: "Backup and update completed. Dragonwilds was offline before update, so it was left offline."
-                });
-              }
-              return;
-            }
-
-            try {
-              await startGameServer(await getProfile());
-              appendActivity("Update complete. Dragonwilds server restarted.");
-              if (typeof onComplete === "function") {
-                await onComplete({
-                  status: "completed",
-                  message: "Backup, update, and restart completed."
-                });
-              }
-            } catch (error) {
-              appendActivity(`Update complete, but the server could not be restarted: ${error.message}`);
-              if (typeof onComplete === "function") {
-                await onComplete({
-                  status: "failed",
-                  message: `Update completed, but restart failed: ${error.message}`
-                });
-              }
-            }
-          }
-        });
-      } catch (error) {
-        removeQuietly(restartMarkerPath);
-        appendActivity(`Update server did not start after stopping Dragonwilds: ${error.message}`);
-        if (typeof onComplete === "function") {
-          await onComplete({
-            status: "failed",
-            message: `Update server did not start after stopping Dragonwilds: ${error.message}`
-          });
-        }
-      }
-    }
+  return runMaintenanceWorkflow(profile, {
+    includeUpdate: true,
+    name: "Backup, update, and restart Dragonwilds",
+    onComplete: options.onComplete
   });
 }
 
@@ -1686,7 +1995,12 @@ function startFirstRunConfigBootstrap(profile, serverExe) {
   return snapshot;
 }
 
-async function startGameServer(profile) {
+async function startGameServer(profile, options = {}) {
+  const {
+    resetCrashState = true,
+    source = "manual",
+    waitUntilReady = false
+  } = options;
   const runningProcesses = await getRunningDragonwildsProcesses(profile);
   if (runningProcesses.length) {
     throw new Error("Dragonwilds dedicated server is already running.");
@@ -1705,25 +2019,70 @@ async function startGameServer(profile) {
 
   const args = getEffectiveLaunchArgs(profile);
   await patchDedicatedServerIni(profile, { allowTemplateCopy: true });
+  const logOffset = await getFileSize(profile.paths.logPath);
 
-  appendActivity(`Starting server: ${install.serverExe} ${formatLaunchArgsForDisplay(args)}`);
-  serverProcess = spawn(install.serverExe, args, {
+  if (resetCrashState) resetCrashRecoveryState();
+  serverRuntimeState.expectedRunning = true;
+  serverRuntimeState.lastStartedAt = timestamp();
+  serverRuntimeState.readinessStatus = "starting";
+  serverRuntimeState.readinessMessage = `Waiting for Dragonwilds to listen on UDP port ${profile.server.port}.`;
+  serverRuntimeState.readyAt = null;
+
+  appendActivity(`Starting server (${source}): ${install.serverExe} ${formatLaunchArgsForDisplay(args)}`);
+  const child = spawn(install.serverExe, args, {
     cwd: path.dirname(install.serverExe),
     windowsHide: false
   });
+  serverProcess = child;
 
-  serverProcess.stdout?.on("data", (chunk) => appendActivity(`server: ${chunk.toString().trim()}`));
-  serverProcess.stderr?.on("data", (chunk) => appendActivity(`server: ${chunk.toString().trim()}`));
-  serverProcess.on("close", (exitCode) => {
-    appendActivity(`Server exited with code ${exitCode}`);
-    serverProcess = null;
+  child.stdout?.on("data", (chunk) => appendActivity(`server: ${chunk.toString().trim()}`));
+  child.stderr?.on("data", (chunk) => appendActivity(`server: ${chunk.toString().trim()}`));
+  let exitHandled = false;
+  child.on("close", (exitCode) => {
+    if (exitHandled) return;
+    exitHandled = true;
+    handleManagedServerExit(child, exitCode);
   });
-  serverProcess.on("error", (error) => {
+  child.on("error", (error) => {
+    if (exitHandled) return;
+    exitHandled = true;
     appendActivity(`Server process error: ${error.message}`);
-    serverProcess = null;
+    handleManagedServerExit(child, null, error);
   });
 
-  return { pid: serverProcess.pid, startedAt: timestamp() };
+  lastStartReadinessPromise = waitForServerReadiness(profile, logOffset, child.pid)
+    .then((result) => {
+      if (serverProcess !== child) return result;
+      if (result.ok) {
+        serverRuntimeState.readinessStatus = "ready";
+        serverRuntimeState.readinessMessage = `UDP readiness confirmed on port ${profile.server.port}.`;
+        serverRuntimeState.readyAt = result.at || timestamp();
+        serverRuntimeState.crashMessage = null;
+        appendActivity(serverRuntimeState.readinessMessage);
+      } else {
+        serverRuntimeState.readinessStatus = "warning";
+        serverRuntimeState.readinessMessage = result.message;
+        appendActivity(`Server readiness warning: ${result.message}`);
+      }
+      return result;
+    })
+    .catch((error) => {
+      const result = { ok: false, at: null, message: error.message };
+      if (serverProcess === child) {
+        serverRuntimeState.readinessStatus = "warning";
+        serverRuntimeState.readinessMessage = error.message;
+      }
+      appendActivity(`Server readiness check failed: ${error.message}`);
+      return result;
+    });
+
+  const started = { pid: child.pid, startedAt: serverRuntimeState.lastStartedAt };
+  if (waitUntilReady) {
+    const readiness = await lastStartReadinessPromise;
+    if (!readiness.ok) throw new Error(readiness.message);
+    return { ...started, readiness };
+  }
+  return started;
 }
 
 async function restartGameServer(profile) {
@@ -1732,6 +2091,7 @@ async function restartGameServer(profile) {
     return startGameServer(profile);
   }
 
+  serverRuntimeState.expectedRunning = true;
   return gracefulStopDragonwildsTask("Restart Dragonwilds server", {
     pauseAtEnd: false,
     onComplete: async ({ exitCode }) => {
@@ -1749,6 +2109,8 @@ async function stopGameServer() {
   if (!runningProcesses.length) {
     throw new Error("Dragonwilds dedicated server is not running.");
   }
+  serverRuntimeState.expectedRunning = false;
+  clearCrashRestartTimer();
   return gracefulStopDragonwildsTask("Stop Dragonwilds server processes");
 }
 
@@ -1789,13 +2151,18 @@ async function openDedicatedConfigFile(profile) {
   throw new Error("DedicatedServer.ini does not exist yet. Install the server and generate config first.");
 }
 
-async function listBackups(profile) {
-  const backupDir = profile.paths.backupDir;
+async function listBackupsInDirectory(backupDir, options = {}) {
+  const { managerOnly = false } = options;
   try {
     const entries = await fsp.readdir(backupDir, { withFileTypes: true });
     const backups = [];
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".zip")) continue;
+      if (
+        !entry.isFile() ||
+        !entry.name.toLowerCase().endsWith(".zip") ||
+        entry.name.toLowerCase().endsWith(".partial.zip")
+      ) continue;
+      if (managerOnly && !/^dragonwilds-save-\d{8}T\d{6}Z\.zip$/i.test(entry.name)) continue;
       const fullPath = path.join(backupDir, entry.name);
       const stat = await fsp.stat(fullPath);
       backups.push({
@@ -1812,6 +2179,10 @@ async function listBackups(profile) {
     if (error.code === "ENOENT") return [];
     throw error;
   }
+}
+
+async function listBackups(profile) {
+  return listBackupsInDirectory(profile.paths.backupDir);
 }
 
 function resolveBackupPath(profile, backupId) {
@@ -1837,21 +2208,31 @@ async function deleteBackup(profile, backupId) {
   return { deleted: safeName };
 }
 
-async function pruneBackups(profile) {
-  const keepCount = Number(profile.backups?.retentionCount || defaultProfile.backups.retentionCount);
-  if (!Number.isInteger(keepCount) || keepCount < 1) return [];
-  const backups = await listBackups(profile);
+async function pruneBackupsInDirectory(backupDir, keepCount, label) {
+  if (!backupDir || !Number.isInteger(keepCount) || keepCount < 1) return [];
+  const backups = await listBackupsInDirectory(backupDir, { managerOnly: true });
   const remove = backups.slice(keepCount);
   for (const backup of remove) {
     await fsp.unlink(backup.path);
-    appendActivity(`Pruned old backup ${backup.name}; keeping last ${keepCount}.`);
+    appendActivity(`Pruned old ${label} backup ${backup.name}; keeping last ${keepCount}.`);
   }
   return remove;
 }
 
-async function createBackup(profile, options = {}) {
+async function pruneBackups(profile) {
+  const keepCount = Number(profile.backups?.retentionCount || defaultProfile.backups.retentionCount);
+  if (!Number.isInteger(keepCount) || keepCount < 1) return [];
+  const removed = await pruneBackupsInDirectory(profile.paths.backupDir, keepCount, "primary");
+  const secondaryDir = String(profile.backups?.secondaryDir || "").trim();
+  if (secondaryDir && normalizePathForCompare(secondaryDir) !== normalizePathForCompare(profile.paths.backupDir)) {
+    removed.push(...await pruneBackupsInDirectory(secondaryDir, keepCount, "secondary"));
+  }
+  return removed;
+}
+
+async function createFullBackupTask(profile, options = {}) {
   const {
-    name = "Create save backup",
+    name = "Create verified full backup",
     onComplete
   } = options;
   if (!exists(profile.paths.saveDir)) {
@@ -1862,20 +2243,247 @@ async function createBackup(profile, options = {}) {
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z")}.zip`;
   const outPath = path.join(profile.paths.backupDir, backupName);
+  const tempPath = outPath.replace(/\.zip$/i, ".partial.zip");
+  const stagingPath = path.join(profile.paths.backupDir, `.dragonwilds-backup-staging-${Date.now()}`);
+  const secondaryDir = String(profile.backups?.secondaryDir || "").trim();
+  const useSecondary = secondaryDir && normalizePathForCompare(secondaryDir) !== normalizePathForCompare(profile.paths.backupDir);
+  const secondaryPath = useSecondary ? path.join(secondaryDir, backupName) : null;
+  const installedVersion = await getInstalledServerVersion(profile);
+  const metadata = JSON.stringify({
+    formatVersion: 2,
+    createdAt: timestamp(),
+    appVersion: appPackage.version,
+    steamBuildId: installedVersion.buildId,
+    serverLogBuild: (await readLastLines(profile.paths.logPath, 500)).map((line) => line.match(/LogInit:\s+Build:\s+(.+)$/i)?.[1]?.trim()).filter(Boolean).at(-1) || null,
+    gamePort: assertValidGamePort(profile.server.port),
+    contents: [
+      "Savegames",
+      ...(exists(profile.paths.configPath) ? ["DedicatedServer.ini"] : []),
+      ...(exists(profilePath) ? ["profile.json"] : [])
+    ]
+  }, null, 2);
   const script = [
     "$ErrorActionPreference='Stop'",
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem",
     `New-Item -ItemType Directory -Force -Path ${psString(profile.paths.backupDir)} | Out-Null`,
-    `Compress-Archive -LiteralPath ${psString(profile.paths.saveDir)} -DestinationPath ${psString(outPath)} -Force`
-  ].join("; ");
+    useSecondary ? `New-Item -ItemType Directory -Force -Path ${psString(secondaryDir)} | Out-Null` : null,
+    `if (Test-Path -LiteralPath ${psString(stagingPath)}) { Remove-Item -LiteralPath ${psString(stagingPath)} -Recurse -Force }`,
+    `if (Test-Path -LiteralPath ${psString(tempPath)}) { Remove-Item -LiteralPath ${psString(tempPath)} -Force }`,
+    `New-Item -ItemType Directory -Force -Path (Join-Path ${psString(stagingPath)} 'Savegames') | Out-Null`,
+    `New-Item -ItemType Directory -Force -Path (Join-Path ${psString(stagingPath)} 'Config') | Out-Null`,
+    `New-Item -ItemType Directory -Force -Path (Join-Path ${psString(stagingPath)} 'Control') | Out-Null`,
+    "function Get-FileSha256([string]$filePath) {",
+    "  $sha = [System.Security.Cryptography.SHA256]::Create()",
+    "  $stream = [System.IO.File]::OpenRead($filePath)",
+    "  try { return [System.BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') } finally { $stream.Dispose(); $sha.Dispose() }",
+    "}",
+    "try {",
+    `  @(Get-ChildItem -LiteralPath ${psString(profile.paths.saveDir)} -Force) | Copy-Item -Destination (Join-Path ${psString(stagingPath)} 'Savegames') -Recurse -Force`,
+    `  if (Test-Path -LiteralPath ${psString(profile.paths.configPath)}) { Copy-Item -LiteralPath ${psString(profile.paths.configPath)} -Destination (Join-Path ${psString(stagingPath)} 'Config\\DedicatedServer.ini') -Force }`,
+    `  if (Test-Path -LiteralPath ${psString(profilePath)}) { Copy-Item -LiteralPath ${psString(profilePath)} -Destination (Join-Path ${psString(stagingPath)} 'Control\\profile.json') -Force }`,
+    `  Set-Content -LiteralPath (Join-Path ${psString(stagingPath)} 'backup-metadata.json') -Encoding UTF8 -Value ${psString(metadata)}`,
+    `  Compress-Archive -Path (Join-Path ${psString(stagingPath)} '*') -DestinationPath ${psString(tempPath)} -CompressionLevel Optimal -Force`,
+    `  $archive = [System.IO.Compression.ZipFile]::OpenRead(${psString(tempPath)})`,
+    "  try {",
+    "    $entries = @($archive.Entries)",
+    "    if (!($entries | Where-Object { $_.FullName -eq 'backup-metadata.json' })) { throw 'Backup verification failed: backup-metadata.json is missing.' }",
+    "    if (!($entries | Where-Object { $_.FullName -match '^Savegames[/\\\\].+' })) { throw 'Backup verification failed: no savegame files were found in the archive.' }",
+    "    foreach ($entry in $entries) { if ($entry.Length -gt 0) { $stream = $entry.Open(); try { $stream.CopyTo([System.IO.Stream]::Null) } finally { $stream.Dispose() } } }",
+    "  } finally { $archive.Dispose() }",
+    `  Move-Item -LiteralPath ${psString(tempPath)} -Destination ${psString(outPath)} -Force`,
+    useSecondary ? `  Copy-Item -LiteralPath ${psString(outPath)} -Destination ${psString(secondaryPath)} -Force` : null,
+    useSecondary ? `  if ((Get-FileSha256 ${psString(outPath)}) -ne (Get-FileSha256 ${psString(secondaryPath)})) { throw 'Secondary backup verification failed: SHA256 hashes do not match.' }` : null,
+    `  Write-Output ${psString(`Verified full backup: ${outPath}`)}`,
+    useSecondary ? `  Write-Output ${psString(`Verified secondary copy: ${secondaryPath}`)}` : null,
+    "} finally {",
+    `  if (Test-Path -LiteralPath ${psString(stagingPath)}) { Remove-Item -LiteralPath ${psString(stagingPath)} -Recurse -Force }`,
+    `  if (Test-Path -LiteralPath ${psString(tempPath)}) { Remove-Item -LiteralPath ${psString(tempPath)} -Force }`,
+    "}"
+  ].filter(Boolean).join("\r\n");
   return powershellTask(name, script, {
+    pauseAtEnd: false,
     onComplete: async ({ exitCode }) => {
+      let completedExitCode = exitCode;
       if (exitCode === 0) {
-        await pruneBackups(await getProfile());
+        try {
+          await pruneBackups(await getProfile());
+        } catch (error) {
+          completedExitCode = 1;
+          appendActivity(`Backup was verified, but retention cleanup failed: ${error.message}`);
+        }
       }
       if (typeof onComplete === "function") {
-        await onComplete({ exitCode });
+        await onComplete({ exitCode: completedExitCode, backupName, outPath, secondaryPath });
       }
     }
+  });
+}
+
+async function runMaintenanceWorkflow(profile, options = {}) {
+  const {
+    includeUpdate = false,
+    name = includeUpdate ? "Backup, update, and restart Dragonwilds" : "Backup and refresh Dragonwilds",
+    onComplete
+  } = options;
+  if (maintenanceWorkflowActive) {
+    throw new Error(`Maintenance already running: ${maintenanceWorkflowName}`);
+  }
+  if (activeTask && ["running", "stopping"].includes(activeTask.status)) {
+    throw new Error(`Task already running: ${activeTask.name}`);
+  }
+
+  const currentProfile = normalizeProfile(profile);
+  const runningProcesses = await getRunningDragonwildsProcesses(currentProfile);
+  const shouldRestart = runningProcesses.length > 0;
+  const saveLogOffset = shouldRestart ? await getFileSize(currentProfile.paths.logPath) : 0;
+  const buildBefore = await getInstalledServerVersion(currentProfile);
+  let buildAfter = buildBefore;
+  let restartSucceeded = false;
+  let workflowFinished = false;
+  maintenanceWorkflowActive = true;
+  maintenanceWorkflowName = name;
+  serverRuntimeState.expectedRunning = shouldRestart;
+  appendActivity(`${name} started. The server ${shouldRestart ? "will be stopped only after a confirmed world save" : "is offline and will remain offline"}.`);
+
+  if (includeUpdate) {
+    try {
+      await updateMaintenanceState({
+        lastUpdateStartedAt: timestamp(),
+        lastUpdateCompletedAt: null,
+        lastUpdateStatus: "running",
+        lastUpdateMessage: "Safe maintenance workflow is running.",
+        buildIdBefore: buildBefore.buildId,
+        buildIdAfter: null,
+        restartReadinessStatus: shouldRestart ? "pending" : "not-required",
+        restartReadyAt: null
+      });
+    } catch (error) {
+      maintenanceWorkflowActive = false;
+      maintenanceWorkflowName = null;
+      throw error;
+    }
+  }
+
+  const finish = async (status, message) => {
+    if (workflowFinished) return;
+    workflowFinished = true;
+    maintenanceWorkflowActive = false;
+    maintenanceWorkflowName = null;
+    if (status !== "completed" && shouldRestart && !restartSucceeded) {
+      try {
+        serverRuntimeState.expectedRunning = (await getRunningDragonwildsProcesses(await getProfile())).length > 0;
+      } catch {
+        serverRuntimeState.expectedRunning = false;
+      }
+    }
+    if (includeUpdate) {
+      await updateMaintenanceState({
+        lastUpdateCompletedAt: timestamp(),
+        lastUpdateStatus: status,
+        lastUpdateMessage: message,
+        buildIdBefore: buildBefore.buildId,
+        buildIdAfter: buildAfter.buildId,
+        restartReadinessStatus: shouldRestart
+          ? (restartSucceeded ? "ready" : "failed")
+          : "not-required",
+        restartReadyAt: restartSucceeded ? serverRuntimeState.readyAt : null
+      });
+    }
+    appendActivity(`${name} ${status}: ${message}`);
+    if (typeof onComplete === "function") await onComplete({ status, message });
+  };
+
+  const restartOrFinish = async () => {
+    if (!shouldRestart) {
+      await finish("completed", includeUpdate
+        ? "Verified full backup and update completed. Dragonwilds was already offline, so it was left offline."
+        : "Verified full backup completed. Dragonwilds was already offline, so it was left offline.");
+      return;
+    }
+    try {
+      await startGameServer(await getProfile(), {
+        source: includeUpdate ? "post-update maintenance" : "post-backup maintenance",
+        resetCrashState: false,
+        waitUntilReady: true
+      });
+      restartSucceeded = true;
+      await finish("completed", includeUpdate
+        ? `Verified full backup, update, and restart completed. UDP readiness was confirmed on port ${currentProfile.server.port}.`
+        : `Verified full backup and restart completed. UDP readiness was confirmed on port ${currentProfile.server.port}.`);
+    } catch (error) {
+      await finish("failed", `${includeUpdate ? "Update completed, but" : "Backup completed, but"} restart readiness failed: ${error.message}`);
+    }
+  };
+
+  const startUpdate = async () => {
+    try {
+      return await runInstall(await getProfile(), false, {
+        skipFirstRunConfigBootstrap: true,
+        onComplete: async ({ exitCode }) => {
+          if (exitCode !== 0) {
+            await finish("failed", `Verified backup completed, but SteamCMD update failed with exit code ${exitCode}. The server was left offline.`);
+            return;
+          }
+          buildAfter = await getInstalledServerVersion(await getProfile());
+          appendActivity(`SteamCMD update completed. Installed build: ${buildAfter.buildId || "unknown"}.`);
+          await restartOrFinish();
+        }
+      });
+    } catch (error) {
+      await finish("failed", `Verified backup completed, but the SteamCMD update could not start: ${error.message}`);
+      return null;
+    }
+  };
+
+  const startBackup = async () => {
+    try {
+      return await createFullBackupTask(await getProfile(), {
+        name: includeUpdate ? "Create verified pre-update backup" : "Create verified full backup",
+        onComplete: async ({ exitCode }) => {
+          if (exitCode !== 0) {
+            await finish("failed", `Full backup failed with exit code ${exitCode}. ${includeUpdate ? "Update was skipped" : "The server was left offline"}.`);
+            return;
+          }
+          appendActivity("Full backup verified successfully. Retention rules were applied after verification.");
+          if (includeUpdate) await startUpdate();
+          else await restartOrFinish();
+        }
+      });
+    } catch (error) {
+      await finish("failed", `Full backup could not start: ${error.message}`);
+      return null;
+    }
+  };
+
+  try {
+    if (!shouldRestart) return await startBackup();
+    return gracefulStopDragonwildsTask("Confirm save and stop Dragonwilds", {
+      forceAfterTimeout: false,
+      pauseAtEnd: false,
+      onComplete: async ({ exitCode }) => {
+        if (exitCode !== 0) {
+          await finish("failed", "Dragonwilds did not stop gracefully. Backup and update were aborted without force-closing the server.");
+          return;
+        }
+        const saveConfirmation = await waitForSaveConfirmation(await getProfile(), saveLogOffset);
+        if (!saveConfirmation.ok) {
+          await finish("failed", `${saveConfirmation.message} Backup and update were aborted.`);
+          return;
+        }
+        appendActivity("Successful world save confirmed in the Dragonwilds log. Starting the full backup.");
+        await startBackup();
+      }
+    });
+  } catch (error) {
+    await finish("failed", error.message);
+    throw error;
+  }
+}
+
+async function createBackup(profile) {
+  return runMaintenanceWorkflow(profile, {
+    includeUpdate: false,
+    name: "Backup and refresh Dragonwilds"
   });
 }
 
@@ -1907,28 +2515,18 @@ async function runScheduledBackupUpdateWorkflow(profile) {
     lastRunStatus: "running",
     lastRunMessage: "Scheduled daily backup/update started."
   });
-  appendActivity("Scheduled daily backup/update started. Backup will run before the no-validate server update workflow.");
+  appendActivity("Scheduled daily maintenance started with confirmed save, verified full backup, no-validate update, restart, and readiness checks.");
 
-  return createBackup(profile, {
-    name: "Scheduled daily backup",
-    onComplete: async ({ exitCode }) => {
-      if (exitCode !== 0) {
-        await finishScheduledBackupUpdate("failed", `Backup failed with exit code ${exitCode}. Update was skipped.`);
-        return;
-      }
-
-      appendActivity("Scheduled daily backup completed. Starting no-validate update workflow.");
-      try {
-        await runUpdateServerWorkflow(await getProfile(), {
-          onComplete: async ({ status, message }) => {
-            await finishScheduledBackupUpdate(status, message);
-          }
-        });
-      } catch (error) {
-        await finishScheduledBackupUpdate("failed", `Update workflow could not be started: ${error.message}`);
-      }
-    }
-  });
+  try {
+    return await runMaintenanceWorkflow(profile, {
+      includeUpdate: true,
+      name: "Scheduled daily maintenance",
+      onComplete: async ({ status, message }) => finishScheduledBackupUpdate(status, message)
+    });
+  } catch (error) {
+    await finishScheduledBackupUpdate("failed", `Maintenance workflow could not start: ${error.message}`);
+    throw error;
+  }
 }
 
 async function checkBackupSchedule() {
@@ -1951,7 +2549,7 @@ async function checkBackupSchedule() {
     }
     if (Date.now() < dueAt) return;
 
-    if (activeTask && ["running", "stopping"].includes(activeTask.status)) {
+    if (maintenanceWorkflowActive || (activeTask && ["running", "stopping"].includes(activeTask.status))) {
       return;
     }
 
@@ -1994,19 +2592,33 @@ async function restoreBackup(profile, backupId) {
   if (!exists(resolvedBackup)) {
     throw new Error(`Backup not found: ${safeName}`);
   }
+  if ((await getRunningDragonwildsProcesses(profile)).length) {
+    throw new Error("Stop the Dragonwilds server before restoring a backup.");
+  }
 
   const safetyPath = `${profile.paths.saveDir}.before-restore-${new Date()
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z")}`;
+  const restoreStagingPath = path.join(dataDir, `.restore-${Date.now()}`);
   const script = [
     "$ErrorActionPreference='Stop'",
-    `if (Test-Path -LiteralPath ${psString(profile.paths.saveDir)}) { Move-Item -LiteralPath ${psString(profile.paths.saveDir)} -Destination ${psString(safetyPath)} }`,
-    `New-Item -ItemType Directory -Force -Path ${psString(profile.paths.saveDir)} | Out-Null`,
-    `Expand-Archive -LiteralPath ${psString(resolvedBackup)} -DestinationPath ${psString(profile.paths.saveDir)} -Force`,
-    `Write-Output ${psString(`Safety copy created at ${safetyPath}`)}`
-  ].join("; ");
-  return powershellTask(`Restore backup ${safeName}`, script);
+    `if (Test-Path -LiteralPath ${psString(restoreStagingPath)}) { Remove-Item -LiteralPath ${psString(restoreStagingPath)} -Recurse -Force }`,
+    `New-Item -ItemType Directory -Force -Path ${psString(restoreStagingPath)} | Out-Null`,
+    "try {",
+    `  Expand-Archive -LiteralPath ${psString(resolvedBackup)} -DestinationPath ${psString(restoreStagingPath)} -Force`,
+    `  $saveSource = Join-Path ${psString(restoreStagingPath)} 'Savegames'`,
+    "  if (!(Test-Path -LiteralPath $saveSource)) { throw 'This archive does not contain a Savegames folder.' }",
+    `  if (Test-Path -LiteralPath ${psString(profile.paths.saveDir)}) { Move-Item -LiteralPath ${psString(profile.paths.saveDir)} -Destination ${psString(safetyPath)} }`,
+    `  Move-Item -LiteralPath $saveSource -Destination ${psString(profile.paths.saveDir)}`,
+    `  $configSource = Join-Path ${psString(restoreStagingPath)} 'Config\\DedicatedServer.ini'`,
+    `  if (Test-Path -LiteralPath $configSource) { New-Item -ItemType Directory -Force -Path (Split-Path -Parent ${psString(profile.paths.configPath)}) | Out-Null; Copy-Item -LiteralPath $configSource -Destination ${psString(profile.paths.configPath)} -Force }`,
+    `  Write-Output ${psString(`World restored. Previous save safety copy: ${safetyPath}`)}`,
+    "} finally {",
+    `  if (Test-Path -LiteralPath ${psString(restoreStagingPath)}) { Remove-Item -LiteralPath ${psString(restoreStagingPath)} -Recurse -Force }`,
+    "}"
+  ].join("\r\n");
+  return powershellTask(`Restore backup ${safeName}`, script, { pauseAtEnd: false });
 }
 
 function checkTcpPort(portNumber) {
@@ -2031,6 +2643,7 @@ async function getStatus() {
   await pruneBackups(profile);
   const backups = await listBackups(profile);
   const runningProcesses = await getRunningDragonwildsProcesses(profile);
+  const serverRunning = runningProcesses.length > 0;
   pruneActivityLogIfNeeded();
   const logLines = await readLastLines(profile.paths.logPath, serverLogSnapshotLimit, { maxAgeMs: logRetentionMs });
   const activityLines = await readLastLines(activityLogPath, activityLogSnapshotLimit, { maxAgeMs: logRetentionMs });
@@ -2049,11 +2662,40 @@ async function getStatus() {
   const secondaryPort = getSecondaryPort(selectedPort);
   const effectiveLaunchArgs = getEffectiveLaunchArgs(profile);
   const joinAddresses = getJoinAddresses(effectiveLaunchArgs, selectedPort);
+  const telemetry = parseServerTelemetry(logLines, serverRunning);
+  const installedVersion = await getInstalledServerVersion(profile, install.manifestPath);
+  const [serverDiskSpace, backupDiskSpace] = await Promise.all([
+    getDiskSpaceSnapshot(profile.paths.serverDir),
+    getDiskSpaceSnapshot(profile.paths.backupDir)
+  ]);
+  const secondaryDir = String(profile.backups?.secondaryDir || "").trim();
+  const secondaryDiskSpace = secondaryDir ? await getDiskSpaceSnapshot(secondaryDir) : null;
+  const newestBackup = backups[0] || null;
+  const newestBackupAgeMs = newestBackup ? Math.max(0, Date.now() - Date.parse(newestBackup.modifiedAt)) : null;
+  const lastFatalAt = telemetry.lastFatalError?.at ? Date.parse(telemetry.lastFatalError.at) : NaN;
+  const hasRecentFatalError = Boolean(
+    telemetry.lastFatalError && (!Number.isFinite(lastFatalAt) || Date.now() - lastFatalAt <= 24 * 60 * 60 * 1000)
+  );
+  const logReady = serverRunning && telemetry.listeningPort === selectedPort;
+  const readiness = isManagedServerProcessRunning()
+    ? {
+        status: serverRuntimeState.readinessStatus,
+        message: serverRuntimeState.readinessMessage,
+        readyAt: serverRuntimeState.readyAt
+      }
+    : {
+        status: logReady ? "ready" : (serverRunning ? "warning" : "offline"),
+        message: logReady
+          ? `Dragonwilds log confirms UDP readiness on port ${selectedPort}.`
+          : (serverRunning ? `Dragonwilds is running, but UDP readiness on port ${selectedPort} has not been confirmed in the current log.` : "Dragonwilds is offline."),
+        readyAt: logReady ? telemetry.readyAt : null
+      };
+  pruneCrashRestartAttempts();
 
   return {
     appVersion: appPackage.version,
     generatedAt: timestamp(),
-    serverRunning: runningProcesses.length > 0,
+    serverRunning,
     serverPid: runningProcesses[0]?.pid || null,
     serverProcesses: runningProcesses,
     task: taskSnapshot(),
@@ -2064,8 +2706,33 @@ async function getStatus() {
     effectiveLaunchArgsText: formatLaunchArgsForDisplay(effectiveLaunchArgs),
     joinAddresses,
     tcpPortOpen,
+    telemetry: {
+      ...telemetry,
+      hasRecentFatalError
+    },
+    readiness,
+    runtime: {
+      ...serverRuntimeState,
+      restartAttempts: [...serverRuntimeState.restartAttempts],
+      autoRestartLimit: crashRestartDelaysSeconds.length,
+      autoRestartWindowMinutes: crashRestartWindowMs / 60000
+    },
+    maintenance: {
+      active: maintenanceWorkflowActive,
+      name: maintenanceWorkflowName,
+      ...normalizeMaintenance(profile.maintenance)
+    },
+    installedVersion,
+    diskSpace: {
+      server: serverDiskSpace,
+      backups: backupDiskSpace,
+      secondaryBackups: secondaryDiskSpace
+    },
+    newestBackup,
+    newestBackupAgeMs,
     logRetentionHours,
     backupRetentionCount: profile.backups?.retentionCount || defaultProfile.backups.retentionCount,
+    backupSecondaryDir: secondaryDir,
     backupSchedule: normalizeBackupSchedule(profile.backups?.schedule),
     configuration: {
       ...configuration,
@@ -2120,6 +2787,12 @@ function sendError(response, error, statusCode = 500) {
   });
 }
 
+function assertMaintenanceIdle(action) {
+  if (maintenanceWorkflowActive) {
+    throw new Error(`${action} is unavailable while ${maintenanceWorkflowName || "server maintenance"} is running.`);
+  }
+}
+
 async function handleApi(request, response, url) {
   try {
     if (request.method === "GET" && url.pathname === "/api/app") {
@@ -2172,6 +2845,7 @@ async function handleApi(request, response, url) {
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/install") {
+      assertMaintenanceIdle("Install or repair");
       sendJson(response, 202, { task: await runInstall(await getProfile(), true) });
       return;
     }
@@ -2182,11 +2856,13 @@ async function handleApi(request, response, url) {
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/repair") {
+      assertMaintenanceIdle("Install or repair");
       sendJson(response, 202, { task: await runInstall(await getProfile(), true) });
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/bootstrap-config") {
+      assertMaintenanceIdle("Config generation");
       const profile = await getProfile();
       const install = await detectServerInstall(profile);
       if (!install.serverExe) {
@@ -2208,16 +2884,19 @@ async function handleApi(request, response, url) {
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/start") {
+      assertMaintenanceIdle("Start server");
       sendJson(response, 202, { server: await startGameServer(await getProfile()) });
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/stop") {
+      assertMaintenanceIdle("Stop server");
       sendJson(response, 202, { task: await stopGameServer() });
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/actions/restart") {
+      assertMaintenanceIdle("Restart server");
       const result = await restartGameServer(await getProfile());
       sendJson(response, 202, result?.status ? { task: result } : { server: result });
       return;
@@ -2246,6 +2925,7 @@ async function handleApi(request, response, url) {
 
     const deleteBackupMatch = url.pathname.match(/^\/api\/backups\/([^/]+)$/);
     if (request.method === "DELETE" && deleteBackupMatch) {
+      assertMaintenanceIdle("Delete backup");
       const profile = await getProfile();
       sendJson(response, 200, {
         backup: await deleteBackup(profile, decodeURIComponent(deleteBackupMatch[1])),
@@ -2256,6 +2936,7 @@ async function handleApi(request, response, url) {
 
     const restoreMatch = url.pathname.match(/^\/api\/backups\/([^/]+)\/restore$/);
     if (request.method === "POST" && restoreMatch) {
+      assertMaintenanceIdle("Restore backup");
       sendJson(response, 202, {
         task: await restoreBackup(await getProfile(), decodeURIComponent(restoreMatch[1]))
       });
@@ -2375,7 +3056,9 @@ module.exports = {
   startControlServer,
   stopControlServer,
   _internal: {
-    isLikelyDragonwildsServerProcess
+    isLikelyDragonwildsServerProcess,
+    parseServerTelemetry,
+    parseSteamManifestText
   }
 };
 

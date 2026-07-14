@@ -24,6 +24,22 @@ function formatBytes(bytes) {
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function formatAge(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "Unknown";
+  const minutes = Math.floor(milliseconds / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function formatDateTime(value, fallback = "Not yet") {
+  if (!value) return fallback;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? fallback : date.toLocaleString();
+}
+
 function toast(message) {
   const element = $("#toast");
   element.textContent = message;
@@ -123,7 +139,9 @@ async function loadApp() {
 }
 
 function taskIsActive() {
-  return ["running", "stopping"].includes(state.status?.task?.status);
+  return Boolean(
+    state.status?.maintenance?.active || ["running", "stopping"].includes(state.status?.task?.status)
+  );
 }
 
 function nextRefreshDelay() {
@@ -175,7 +193,14 @@ function renderStatus() {
 
   setText("appVersion", status.appVersion);
   setText("selectedPort", String(status.selectedPort));
-  setText("maxPlayersTop", String(profile.server.maxPlayers));
+  const connectedPlayers = status.telemetry?.connectedPlayers || [];
+  setText("connectedPlayersTop", String(status.telemetry?.connectedPlayerCount || 0));
+  setText(
+    "connectedPlayersSummary",
+    connectedPlayers.length ? connectedPlayers.map((player) => player.name).join(", ") : "No players connected"
+  );
+  const connectedSummary = $("#connectedPlayersSummary");
+  if (connectedSummary) connectedSummary.title = connectedSummary.textContent;
   setText("serverStatus", status.serverRunning ? "ONLINE" : "OFFLINE");
   setText(
     "serverPid",
@@ -206,12 +231,32 @@ function renderStatus() {
   renderJoinAddresses(status);
 
   const taskNotice = $("#taskNotice");
-  if (status.task && status.task.status === "running") {
+  if (status.maintenance?.active || (status.task && ["running", "stopping"].includes(status.task.status))) {
     taskNotice.hidden = false;
-    setText("taskName", status.task.name);
-    setText("taskDetails", status.task.userPrompt || status.task.recentOutput.slice(-1)[0] || "Waiting for output...");
+    setText(
+      "taskName",
+      ["running", "stopping"].includes(status.task?.status)
+        ? status.task.name
+        : status.maintenance?.name || "Server maintenance"
+    );
+    setText(
+      "taskDetails",
+      status.task?.userPrompt || status.task?.recentOutput?.slice(-1)[0] || "Moving to the next maintenance step..."
+    );
   } else {
     taskNotice.hidden = true;
+  }
+
+  const crashNotice = $("#crashNotice");
+  const crashAction = $("#crashNoticeAction");
+  if (status.runtime?.crashMessage) {
+    crashNotice.hidden = false;
+    crashNotice.classList.toggle("crash-loop", Boolean(status.runtime.crashLoop));
+    setText("crashNoticeTitle", status.runtime.crashLoop ? "Crash-loop protection is active" : "Automatic restart scheduled");
+    setText("crashNoticeDetails", status.runtime.crashMessage);
+    crashAction.hidden = !status.runtime.crashLoop || status.serverRunning;
+  } else {
+    crashNotice.hidden = true;
   }
 
   renderHealth(status);
@@ -265,6 +310,15 @@ function renderHealth(status) {
       : installed
         ? { text: "Generate config", className: "warn" }
         : { text: "Install first", className: "warn" };
+  const saveAt = status.telemetry?.lastSuccessfulSaveAt;
+  const saveAgeMs = saveAt ? Date.now() - new Date(saveAt).getTime() : null;
+  const backupAgeMs = status.newestBackupAgeMs;
+  const freeBytes = status.diskSpace?.backups?.freeBytes;
+  const diskClass = !Number.isFinite(freeBytes) ? "warn" : freeBytes < 10 * 1024 ** 3 ? "bad" : freeBytes < 25 * 1024 ** 3 ? "warn" : "ok";
+  const backupClass = !Number.isFinite(backupAgeMs) ? "warn" : backupAgeMs <= 26 * 60 * 60 * 1000 ? "ok" : backupAgeMs <= 48 * 60 * 60 * 1000 ? "warn" : "bad";
+  const saveClass = !saveAt ? (status.serverRunning ? "bad" : "warn") : saveAgeMs <= 30 * 60 * 1000 ? "ok" : saveAgeMs <= 60 * 60 * 1000 ? "warn" : "bad";
+  const readinessClass = status.readiness?.status === "ready" ? "ok" : status.readiness?.status === "offline" ? "warn" : "bad";
+  const playerNames = (status.telemetry?.connectedPlayers || []).map((player) => player.name);
   const items = [
     ["SteamCMD", healthValue(status.paths.steamcmd.exists, "Ready", "Missing")],
     [
@@ -308,9 +362,49 @@ function renderHealth(status) {
         : { text: installed ? "After first start" : "Missing", className: installed ? "warn" : "bad" }
     ],
     ["Log file", healthValue(status.paths.log.exists, "Found", "No log yet")],
-    ["Game port", { text: `${status.selectedPort}`, className: status.tcpPortOpen ? "ok" : "warn" }],
-    ["Secondary port", { text: `${status.secondaryPort || Number(status.selectedPort) + 1}`, className: "warn" }],
-    ["Backup folder", healthValue(status.paths.backups.exists, "Ready", "Will be created")]
+    [
+      "Server readiness",
+      { text: status.readiness?.message || "Unknown", className: readinessClass }
+    ],
+    [
+      "Connected players",
+      {
+        text: playerNames.length ? `${playerNames.length}: ${playerNames.join(", ")}` : (status.serverRunning ? "0 connected" : "Server offline"),
+        className: status.serverRunning ? "ok" : "warn"
+      }
+    ],
+    [
+      "Last successful save",
+      { text: saveAt ? `${formatAge(saveAgeMs)} (${formatDateTime(saveAt)})` : "No successful save in current log", className: saveClass }
+    ],
+    [
+      "Newest verified backup",
+      { text: Number.isFinite(backupAgeMs) ? `${formatAge(backupAgeMs)} (${formatBytes(status.newestBackup?.sizeBytes)})` : "No backup yet", className: backupClass }
+    ],
+    [
+      "Backup disk free",
+      { text: Number.isFinite(freeBytes) ? `${formatBytes(freeBytes)} free` : "Unavailable", className: diskClass }
+    ],
+    [
+      "Fatal errors (24h)",
+      status.telemetry?.hasRecentFatalError
+        ? { text: status.telemetry.lastFatalError?.message || "Fatal error found", className: "bad" }
+        : { text: "None found", className: "ok" }
+    ],
+    [
+      "Installed Steam build",
+      status.installedVersion?.buildId
+        ? { text: status.installedVersion.buildId, className: "ok" }
+        : { text: "Build ID unavailable", className: installed ? "warn" : "bad" }
+    ],
+    ["Game ports", { text: `${status.selectedPort} / ${status.secondaryPort || Number(status.selectedPort) + 1} UDP`, className: "ok" }],
+    ["Backup folder", healthValue(status.paths.backups.exists, "Ready", "Will be created")],
+    [
+      "Secondary backup",
+      status.backupSecondaryDir
+        ? { text: status.diskSpace?.secondaryBackups?.error ? "Path unavailable" : status.backupSecondaryDir, className: status.diskSpace?.secondaryBackups?.error ? "bad" : "ok" }
+        : { text: "Not configured", className: "warn" }
+    ]
   ];
 
   $("#healthList").innerHTML = items
@@ -318,7 +412,7 @@ function renderHealth(status) {
       ([name, value]) => `
         <div class="health-item health-item-${value.className}">
           <span class="health-name"><span class="health-dot" aria-hidden="true"></span>${escapeHtml(name)}</span>
-          <span class="health-value ${value.className}">${escapeHtml(value.text)}</span>
+          <span class="health-value ${value.className}" title="${escapeAttr(value.text)}">${escapeHtml(value.text)}</span>
         </div>
       `
     )
@@ -336,7 +430,8 @@ function renderPaths(status) {
     ["Official Linux template", status.paths.configTemplate?.path || "Not found yet"],
     ["Savegames", status.paths.saves.path],
     ["Log file", status.paths.log.path],
-    ["Backups", status.paths.backups.path]
+    ["Backups", status.paths.backups.path],
+    ["Secondary backups", status.backupSecondaryDir || "Not configured"]
   ];
 
   $("#installPaths").innerHTML = paths
@@ -355,6 +450,24 @@ function renderServerDetails(status) {
   const profile = state.profile;
   const details = [
     ["App ID", profile.appId],
+    ["Installed Steam build", status.installedVersion?.buildId || "Unknown"],
+    ["Manifest updated", formatDateTime(status.installedVersion?.lastUpdatedAt, "Unknown")],
+    ["Server log build", status.telemetry?.logBuild || "Not found in current log"],
+    ["Engine version", status.telemetry?.engineVersion || "Not found in current log"],
+    [
+      "Last successful update",
+      status.maintenance?.lastUpdateStatus === "completed"
+        ? formatDateTime(status.maintenance.lastUpdateCompletedAt)
+        : status.maintenance?.lastUpdateStatus
+          ? `${status.maintenance.lastUpdateStatus}: ${status.maintenance.lastUpdateMessage || "No details"}`
+          : "Not run by this version"
+    ],
+    [
+      "Post-restart readiness",
+      status.maintenance?.restartReadinessStatus === "ready"
+        ? `Ready at ${formatDateTime(status.maintenance.restartReadyAt)}`
+        : status.maintenance?.restartReadinessStatus || "Not checked"
+    ],
     ["Custom launch args", profile.server.launchArgs],
     ["Effective launch args", status.effectiveLaunchArgsText || profile.server.launchArgs],
     ["Game port", status.selectedPort || profile.server.port],
@@ -386,6 +499,10 @@ function renderBackups() {
   const retentionInput = $("#backupRetentionCount");
   if (retentionInput && document.activeElement !== retentionInput) {
     retentionInput.value = String(state.profile?.backups?.retentionCount || state.status?.backupRetentionCount || 10);
+  }
+  const secondaryInput = $("#backupSecondaryDir");
+  if (secondaryInput && document.activeElement !== secondaryInput) {
+    secondaryInput.value = state.profile?.backups?.secondaryDir || state.status?.backupSecondaryDir || "";
   }
   renderBackupSchedule();
 }
@@ -816,6 +933,7 @@ async function saveBackupSettings() {
   const retentionCount = Number(input?.value || 10);
   const scheduleEnabled = Boolean($("#backupScheduleEnabled")?.checked);
   const scheduleTime = $("#backupScheduleTime")?.value || "03:00";
+  const secondaryDir = $("#backupSecondaryDir")?.value?.trim() || "";
   if (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 999) {
     throw new Error("Keep last backups must be a whole number from 1 to 999.");
   }
@@ -824,27 +942,27 @@ async function saveBackupSettings() {
   }
   const payload = await api("/api/backups/settings", {
     method: "PUT",
-    body: JSON.stringify({ retentionCount, scheduleEnabled, scheduleTime })
+    body: JSON.stringify({ retentionCount, scheduleEnabled, scheduleTime, secondaryDir })
   });
   state.profile = payload.profile;
   state.status = payload.status;
   renderAll();
   toast(
     scheduleEnabled
-      ? `Backup settings saved. Daily maintenance runs at ${scheduleTime}.`
-      : `Backup retention saved. Keeping last ${retentionCount} backups.`
+      ? `Backup settings saved. Daily verified maintenance runs at ${scheduleTime}.`
+      : `Backup settings saved. Keeping last ${retentionCount} verified backups.`
   );
 }
 
 async function runAction(action) {
   const map = {
     install: ["/api/actions/install", "Install or repair task started"],
-    update: ["/api/actions/update", "Update workflow started"],
+    update: ["/api/actions/update", "Safe backup and update workflow started"],
     "bootstrap-config": ["/api/actions/bootstrap-config", "First-run config generation started"],
     start: ["/api/actions/start", "Server start requested"],
     stop: ["/api/actions/stop", "Server stop requested"],
     restart: ["/api/actions/restart", "Server restart requested"],
-    backup: ["/api/backups", "Backup task started"]
+    backup: ["/api/backups", "Verified full backup workflow started"]
   };
   const [path, message] = map[action] || [];
   if (!path) return;

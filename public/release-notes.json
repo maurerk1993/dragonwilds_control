@@ -1,19 +1,27 @@
 {
-  "version": "0.5.12",
-  "title": "Daily backup and update schedule",
-  "date": "2026-07-07",
+  "version": "0.6.0",
+  "title": "Safer maintenance and live server health",
+  "date": "2026-07-14",
   "notes": [
     {
-      "heading": "Daily maintenance",
-      "body": "The Backups page can now schedule one daily backup followed by the normal no-validate server update workflow."
+      "heading": "Verified full maintenance",
+      "body": "Manual and scheduled maintenance now confirms a successful world save, creates and verifies a full backup, runs the normal no-validate update, and waits for the configured UDP port before reporting success."
     },
     {
-      "heading": "Retention still applies",
-      "body": "Scheduled backups use the same backup retention setting, so old backups are pruned just like manual backups."
+      "heading": "Complete recovery data",
+      "body": "New backups include savegames, DedicatedServer.ini, the control profile, and recovery metadata. An optional secondary folder can receive a hash-verified copy, and retention runs only after verification."
     },
     {
-      "heading": "Restart after updates",
-      "body": "If Dragonwilds was running before the scheduled update, the app restarts it after SteamCMD finishes."
+      "heading": "Live players and crash protection",
+      "body": "The dashboard now shows players observed in server join and leave events. Unexpected app-managed server exits receive three backoff restart attempts before a visible crash-loop warning stops further retries."
+    },
+    {
+      "heading": "Health that answers useful questions",
+      "body": "Health Check now shows the last successful save, newest backup age, backup-drive free space, recent fatal errors, installed Steam build, and log-confirmed readiness."
+    },
+    {
+      "heading": "No setup changes required",
+      "body": "Your existing game port, passwords, schedule, and retention settings are preserved. Secondary backup storage is optional."
     }
   ]
 }
